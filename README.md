@@ -37,7 +37,16 @@ uvicorn skill_assessment.runner:app --host 0.0.0.0 --port 8000 --reload
 | Метод | Путь |
 |--------|------|
 | GET | `/api/skill-assessment/health` |
+| GET | `/api/skill-assessment/domain/json-schema` — JSON Schema черновых сущностей |
 | GET | `/skill-assessment` — черновой UI |
+
+## Черновая модель (domain)
+
+См. `skill_assessment/domain/entities.py`: `SkillDomain`, `Skill`, `AssessmentSession`, `SkillAssessmentResult`, перечисления уровней и типов доказательств. Персистенция (SQLAlchemy / таблицы в БД ядра) — следующий этап.
+
+## Git
+
+Первый коммит в корне пакета; ветка по умолчанию — `main`. Подключение к GitHub: `git remote add origin …`, затем `git push -u origin main`.
 
 Swagger ядра: `/docs` (эндпоинты плагина попадут в ту же схему).
 
