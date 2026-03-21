@@ -1,0 +1,56 @@
+<!-- served by skill_assessment.runner at GET /skill-assessment -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Оценка навыков — Skill assessment</title>
+  <link rel="stylesheet" href="/static/shared/layout.css">
+  <style>
+    .wrap { max-width: 560px; padding: 2rem; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; margin-top: 1rem; }
+    code { font-size: 0.88rem; color: var(--accent); }
+    .ok { color: var(--success); }
+    .err { color: var(--error); }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <div class="sidebar-brand">Skill assessment</div>
+        <a href="/clients" class="sidebar-item">← Клиенты</a>
+        <a href="/docs" class="sidebar-item api-link">API (Swagger)</a>
+      </div>
+    </aside>
+    <main class="main">
+      <div class="content wrap">
+        <h1 style="margin-top:0;font-size:1.25rem;">Оценка навыков (черновик)</h1>
+        <p class="meta">Пакет <strong>skill_assessment</strong> подключён через <code>skill_assessment.runner:app</code>; ядро без изменений.</p>
+        <div class="card">
+          <div><strong>GET</strong> <code>/api/skill-assessment/health</code></div>
+          <p id="healthOut" class="meta" style="margin:0.75rem 0 0 0;">Загрузка…</p>
+        </div>
+        <p class="meta" style="margin-top:1.5rem;"><a href="/clients">Организации</a> — рабочее пространство клиента. Ссылку «Приложения» в сайдбаре ядра можно добавить опциональным патчем (см. README пакета).</p>
+      </div>
+    </main>
+  </div>
+  <script>
+    (async () => {
+      const el = document.getElementById('healthOut');
+      try {
+        const r = await fetch('/api/skill-assessment/health');
+        const j = await r.json();
+        if (r.ok) {
+          el.innerHTML = '<span class="ok">OK</span> — ' + JSON.stringify(j);
+        } else {
+          el.innerHTML = '<span class="err">HTTP ' + r.status + '</span> — ' + JSON.stringify(j);
+        }
+      } catch (e) {
+        el.innerHTML = '<span class="err">Ошибка запроса.</span>';
+      }
+    })();
+  </script>
+</body>
+</html>

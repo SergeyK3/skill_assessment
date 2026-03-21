@@ -1,0 +1,18 @@
+[project]
+name = "skill-assessment"
+version = "0.1.0"
+description = "Skill assessment module for Typical Infrastructure (optional plugin router)."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "pydantic>=2.8.0",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["skill_assessment*"]
