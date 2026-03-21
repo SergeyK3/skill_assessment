@@ -37,12 +37,36 @@ uvicorn skill_assessment.runner:app --host 0.0.0.0 --port 8000 --reload
 | Метод | Путь |
 |--------|------|
 | GET | `/api/skill-assessment/health` |
-| GET | `/api/skill-assessment/domain/json-schema` — JSON Schema черновых сущностей |
+| GET | `/api/skill-assessment/domain/json-schema` |
+| GET | `/api/skill-assessment/taxonomy/domains` |
+| GET | `/api/skill-assessment/taxonomy/skills?domain_id=` |
+| POST | `/api/skill-assessment/sessions` |
+| GET | `/api/skill-assessment/sessions` |
+| GET | `/api/skill-assessment/sessions/{id}` |
+| POST | `/api/skill-assessment/sessions/{id}/start` |
+| POST | `/api/skill-assessment/sessions/{id}/complete` |
+| POST | `/api/skill-assessment/sessions/{id}/results` |
+| GET | `/api/skill-assessment/sessions/{id}/results` |
 | GET | `/skill-assessment` — черновой UI |
 
-## Черновая модель (domain)
+Таблицы SQLite: префикс `sa_*`, общий файл с ядром (`app.db` или из `SQLITE_PATH`).
 
-См. `skill_assessment/domain/entities.py`: `SkillDomain`, `Skill`, `AssessmentSession`, `SkillAssessmentResult`, перечисления уровней и типов доказательств. Персистенция (SQLAlchemy / таблицы в БД ядра) — следующий этап.
+## Черновая модель (domain + ORM)
+
+- Pydantic: `skill_assessment/domain/entities.py`
+- SQLAlchemy: `skill_assessment/infrastructure/db_models.py` (общий `Base` ядра)
+
+При первом запуске поднимается демо-таксономия (один домен COMM и два навыка), если таблицы пустые.
+
+## Тесты
+
+Из venv ядра, с установленным `skill_assessment[dev]`::
+
+```powershell
+pytest D:\path\to\repo\skill_assessment\tests\test_assessment_flow.py -q
+```
+
+`conftest.py` добавляет `typical_infrastructure` в `sys.path`. Для `TestClient` используйте контекст `with TestClient(app) as c:` — так отрабатывает startup и создаются таблицы.
 
 ## Git
 

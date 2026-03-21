@@ -18,13 +18,31 @@ from pathlib import Path
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
 
+import skill_assessment.infrastructure.db_models  # noqa: F401 — таблицы на общем Base
+
+from app.db import SessionLocal
 from app.main import app
 
 from skill_assessment.router import router as skill_assessment_router
+from skill_assessment.services.taxonomy_seed import ensure_demo_taxonomy
 
 app.include_router(skill_assessment_router, prefix="/api")
 
 _static = Path(__file__).resolve().parent / "static"
+
+
+@app.on_event("startup")
+def _skill_assessment_startup() -> None:
+    """Гарантируем таблицы skill_assessment и демо-таксономию при пустых таблицах."""
+    from app.db import Base, engine
+
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        ensure_demo_taxonomy(db)
+        db.commit()
+    finally:
+        db.close()
 
 
 @app.get("/skill-assessment", include_in_schema=False)
