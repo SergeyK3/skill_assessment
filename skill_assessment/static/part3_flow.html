@@ -1,0 +1,523 @@
+<!-- route: GET /api/skill-assessment/ui | file: skill_assessment/static/part3_flow.html -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Оценка навыков — сессия</title>
+  <link rel="stylesheet" href="/static/shared/layout.css">
+  <style>
+    .wrap { max-width: 900px; padding: 2rem; }
+    .block { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.25rem; margin-top: 1rem; }
+    .block h2 { font-size: 1rem; margin: 0 0 0.75rem 0; color: var(--accent); }
+    .block h2 .step-num { opacity: 0.75; font-weight: 600; margin-right: 0.35rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin-top: 0.5rem; }
+    th, td { border-bottom: 1px solid var(--border); padding: 0.5rem 0.45rem; text-align: left; }
+    th { color: var(--text-muted); font-weight: 500; font-size: 0.8rem; }
+    th.num { text-align: center; width: 4.5rem; }
+    td.num { text-align: center; }
+    tr.row-selected { background: rgba(124,58,237,0.12); }
+    select.level { min-width: 8rem; padding: 0.35rem 0.5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: inherit; }
+    .row-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.75rem; }
+    button { padding: 0.45rem 0.85rem; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: inherit; cursor: pointer; font-size: 0.88rem; }
+    button.primary { background: rgba(124,58,237,0.25); border-color: var(--accent); color: var(--accent); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .ok { color: var(--success); }
+    .err { color: var(--error); }
+    pre.case { white-space: pre-wrap; font-size: 0.85rem; line-height: 1.5; margin: 0.5rem 0 0 0; padding: 0.75rem; background: rgba(124,58,237,0.08); border: 1px dashed var(--accent); border-radius: 8px; }
+    code { font-size: 0.85rem; color: var(--accent); }
+    .meta { font-size: 0.85rem; color: var(--text-muted); margin: 0.35rem 0; }
+    .sidebar-section-label { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0.75rem 0 0.35rem 0; }
+    .prep-banner { font-size: 0.85rem; line-height: 1.45; padding: 0.65rem 0.75rem; background: rgba(124,58,237,0.08); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.75rem; }
+    .stub-box { padding: 0.75rem; background: var(--bg); border: 1px dashed var(--border); border-radius: 8px; font-size: 0.88rem; color: var(--text-muted); }
+    .mark { font-size: 1.1rem; }
+    #workflowPanel[hidden] { display: none !important; }
+    th.th-filter { vertical-align: top; min-width: 9.5rem; max-width: 16rem; }
+    th.th-filter-pos { min-width: 14rem; max-width: none; }
+    th.th-filter .th-filter-label { display: block; font-size: 0.72rem; color: var(--text-muted); font-weight: 500; margin-bottom: 0.35rem; line-height: 1.25; }
+    th.th-filter select.th-select-filter { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; font-size: 0.78rem; padding: 0.35rem 0.4rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: inherit; }
+    th.th-emp-head .th-emp-title { display: block; margin-bottom: 0.35rem; }
+    th.th-emp-head .btn-clear-filters { font-size: 0.75rem; padding: 0.2rem 0.45rem; border-radius: 6px; border: 1px dashed var(--border); background: transparent; color: var(--text-muted); cursor: pointer; }
+    th.th-emp-head .btn-clear-filters:hover { border-color: var(--accent); color: var(--accent); }
+    table .td-clip { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.86rem; }
+    table .td-position {
+      min-width: 14rem;
+      white-space: normal;
+      word-break: break-word;
+      line-height: 1.4;
+      vertical-align: top;
+      font-size: 0.86rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <div class="sidebar-brand">Оценка навыков</div>
+        <a id="linkBackSa" href="/skill-assessment" class="sidebar-item">← Назад к входу</a>
+        <div class="sidebar-section-label">Ядро — подготовка</div>
+        <a href="/clients" class="sidebar-item">Организации</a>
+        <a href="/wizard" class="sidebar-item">Мастер onboarding</a>
+        <a id="navCoreWs" class="sidebar-item" href="/clients" hidden>Рабочее пространство</a>
+        <a id="navCoreEmp" class="sidebar-item" href="/clients" hidden>Сотрудники</a>
+        <a id="navCorePos" class="sidebar-item" href="/clients" hidden>Должности</a>
+        <a href="/docs" class="sidebar-item api-link">API</a>
+      </div>
+    </aside>
+    <main class="main">
+      <div class="content wrap">
+        <h1 style="margin-top:0;font-size:1.25rem;">Оценка навыков — рабочая сессия</h1>
+        <p id="prepHint" class="prep-banner" hidden>Укажите <code>client_id</code> в URL (из <a href="/clients">/clients</a> или <strong>/client/…</strong> → Приложения), чтобы загрузить сотрудников из ядра. Без него используется <code>demo_client</code> и список может быть пустым.</p>
+        <div class="prep-banner" id="nextStepsHint">
+          <strong>Оценок ещё нет — что делать:</strong> это ожидаемо в начале. В таблице ниже нажмите <strong>Выбрать</strong> у сотрудника → откроется блок с кнопкой <strong>Создать сессию и старт</strong> → затем пройдите этапы 1–3. Колонки «Док. / Кейс / Рук.» и «Последняя сессия» заполнятся после прохождения. Если списка сотрудников нет — сначала добавьте их в <a id="hintWsLink" href="#">рабочем пространстве</a> организации.
+        </div>
+
+        <div class="block">
+          <h2>Сотрудники и статус этапов</h2>
+          <p class="meta">По каждому сотруднику — последняя сессия оценки в этой организации (если сессий не было, в колонках стоят прочерки). Фильтры — в заголовках колонок «Подразделение» и «Должность». Дальше нажмите <strong>Выбрать</strong> у нужного человека.</p>
+          <p id="rosterErr" class="meta err" hidden></p>
+          <div style="overflow-x:auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th class="th-emp-head">
+                    <span class="th-filter-label th-emp-title">Сотрудник</span>
+                    <button type="button" class="btn-clear-filters" id="btnClearFilters" title="Сбросить фильтры по подразделению и должности">Сбросить фильтры</button>
+                  </th>
+                  <th class="th-filter">
+                    <span class="th-filter-label">Подразделение</span>
+                    <select id="filterOrgUnit" class="th-select-filter" title="Фильтр по подразделению" aria-label="Фильтр: подразделение"><option value="">Все</option></select>
+                  </th>
+                  <th class="th-filter th-filter-pos">
+                    <span class="th-filter-label">Должность</span>
+                    <select id="filterPosition" class="th-select-filter" title="Фильтр по должности" aria-label="Фильтр: должность"><option value="">Все</option></select>
+                  </th>
+                  <th class="num" title="Опрос по служебным документам">Док.</th>
+                  <th class="num" title="Кейс (Part 2)">Кейс</th>
+                  <th class="num" title="Оценка руководителя (Part 3)">Рук.</th>
+                  <th>Последняя сессия</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="rosterBody">
+                <tr><td colspan="8" class="meta">Загрузка…</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="meta"><button type="button" id="btnRefreshRoster">Обновить список</button></p>
+        </div>
+
+        <div id="workflowPanel" hidden>
+          <div class="block">
+            <h2>Выбрано</h2>
+            <p class="meta">Организация: <code id="clientIdDisplay">—</code> · Сотрудник: <strong id="selectedEmpName">—</strong></p>
+            <div class="row-actions">
+              <button type="button" class="primary" id="btnCreate">Создать сессию и старт</button>
+              <span id="sessionInfo" class="meta"></span>
+            </div>
+            <p id="phaseOut" class="meta" style="margin-top:0.75rem;">—</p>
+          </div>
+
+          <div class="block">
+            <h2><span class="step-num">1</span> Опрос по служебным документам</h2>
+            <p class="meta">Пока заглушка: интеграция с регламентами и фиксацией прохождения — позже.</p>
+            <div class="stub-box">Здесь будет опрос по утверждённым служебным документам (чек-лист / квиз). Сейчас этап не влияет на статус в таблице выше.</div>
+            <div class="row-actions" style="margin-top:0.75rem;">
+              <button type="button" id="btnDocsStub" disabled>Заглушка: скоро</button>
+            </div>
+          </div>
+
+          <div class="block">
+            <h2><span class="step-num">2</span> Загрузить текст кейса</h2>
+            <p class="meta">Текст кейса по первому навыку домена (заглушка-шаблон).</p>
+            <div class="row-actions">
+              <button type="button" id="btnCase">Загрузить текст кейса</button>
+            </div>
+            <pre class="case" id="caseOut" hidden></pre>
+          </div>
+
+          <div class="block">
+            <h2><span class="step-num">3</span> Оценка руководителем (Part 3)</h2>
+            <p class="meta">Шкала: 0 — нет, 1 — частично, 2 — типично, 3 — продвинуто</p>
+            <div id="skillsMount"><p class="meta">Сначала нажмите «Создать сессию и старт».</p></div>
+            <div class="row-actions">
+              <button type="button" class="primary" id="btnSave" disabled>Сохранить оценки руководителя</button>
+              <span id="saveOut" class="meta"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script>
+    const API = '/api/skill-assessment';
+    const clientId = (function() {
+      const c = new URLSearchParams(window.location.search).get('client_id');
+      return c && c.trim() ? c.trim() : 'demo_client';
+    })();
+
+    let selectedEmployeeId = null;
+    let selectedEmployeeLabel = '';
+    let sessionId = null;
+    let skills = [];
+    let sessionsCache = [];
+    let employeesCache = [];
+    let orgUnitsById = {};
+    let positionsById = {};
+
+    (function() {
+      const q = new URLSearchParams(window.location.search).get('client_id');
+      const a = document.getElementById('linkBackSa');
+      if (a) a.href = q && q.trim() ? '/skill-assessment?client_id=' + encodeURIComponent(q.trim()) : '/skill-assessment';
+      const el = document.getElementById('clientIdDisplay');
+      if (el) el.textContent = clientId;
+      const hint = document.getElementById('prepHint');
+      if (hint && (!q || !q.trim())) hint.hidden = false;
+      if (q && q.trim()) {
+        const base = '/client/' + encodeURIComponent(q.trim());
+        [['navCoreWs', ''], ['navCoreEmp', '#employees'], ['navCorePos', '#positions']].forEach(([id, hash]) => {
+          const n = document.getElementById(id);
+          if (n) { n.href = base + hash; n.hidden = false; }
+        });
+        const hl = document.getElementById('hintWsLink');
+        if (hl) hl.href = base + '#employees';
+      } else {
+        const hl = document.getElementById('hintWsLink');
+        if (hl) hl.href = '/clients';
+      }
+    })();
+
+    function empLabel(e) {
+      const parts = [e.last_name, e.first_name, e.middle_name].filter(Boolean);
+      return parts.length ? parts.join(' ') : (e.email || e.id);
+    }
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function orgUnitDisplay(ouId) {
+      if (!ouId) return '—';
+      const u = orgUnitsById[ouId];
+      if (!u) return '—';
+      const code = u.code || '';
+      const name = u.name || '';
+      return (code && name) ? (code + ' · ' + name) : (name || code || '—');
+    }
+
+    function positionDisplay(posId) {
+      if (!posId) return '—';
+      const p = positionsById[posId];
+      if (!p) return '—';
+      const code = p.code || '';
+      const name = p.name || '';
+      return (code && name) ? (code + ' · ' + name) : (name || code || '—');
+    }
+
+    function filteredEmployees() {
+      const fo = document.getElementById('filterOrgUnit');
+      const fp = document.getElementById('filterPosition');
+      const orgVal = fo ? fo.value : '';
+      const posVal = fp ? fp.value : '';
+      return employeesCache.filter(e => {
+        if (orgVal && (e.org_unit_id || '') !== orgVal) return false;
+        if (posVal && (e.position_id || '') !== posVal) return false;
+        return true;
+      });
+    }
+
+    function fillFilterSelects() {
+      const orgSel = document.getElementById('filterOrgUnit');
+      const posSel = document.getElementById('filterPosition');
+      const orgIds = Object.keys(orgUnitsById).sort((a, b) => orgUnitDisplay(a).localeCompare(orgUnitDisplay(b), 'ru'));
+      const posIds = Object.keys(positionsById).sort((a, b) => positionDisplay(a).localeCompare(positionDisplay(b), 'ru'));
+      const curO = orgSel ? orgSel.value : '';
+      const curP = posSel ? posSel.value : '';
+      if (orgSel) {
+        orgSel.innerHTML = '<option value="">Все</option>' +
+          orgIds.map(id => '<option value="' + escapeHtml(id) + '">' + escapeHtml(orgUnitDisplay(id)) + '</option>').join('');
+        if (curO && orgIds.includes(curO)) orgSel.value = curO;
+      }
+      if (posSel) {
+        posSel.innerHTML = '<option value="">Все</option>' +
+          posIds.map(id => '<option value="' + escapeHtml(id) + '">' + escapeHtml(positionDisplay(id)) + '</option>').join('');
+        if (curP && posIds.includes(curP)) posSel.value = curP;
+      }
+    }
+
+    function latestSessionForEmployee(employeeId) {
+      if (!Array.isArray(sessionsCache)) return null;
+      const list = sessionsCache.filter(s => s && s.employee_id === employeeId);
+      if (!list.length) return null;
+      list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      return list[0];
+    }
+
+    function stageMarks(sess) {
+      const empty = { d1: '—', d2: '—', d3: '—' };
+      if (!sess) return empty;
+      const st = sess.status;
+      const ph = sess.phase || '';
+      const d1 = '—';
+      let d2 = '—';
+      let d3 = '—';
+      if (st !== 'draft') {
+        d2 = '<span class="mark ok" title="Сценарий запущен">✓</span>';
+      }
+      if (st === 'completed') {
+        d3 = '<span class="mark ok" title="Сессия завершена">✓</span>';
+      } else if (st === 'in_progress' && (ph === 'part3' || ph === 'part1' || ph === 'report')) {
+        d3 = '<span class="mark" title="Частично">◐</span>';
+      }
+      return { d1, d2, d3 };
+    }
+
+    function renderRoster() {
+      if (!Array.isArray(sessionsCache)) sessionsCache = [];
+      const tbody = document.getElementById('rosterBody');
+      const errEl = document.getElementById('rosterErr');
+      errEl.hidden = true;
+      const list = filteredEmployees();
+      if (!employeesCache.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="meta">Нет сотрудников для этого клиента. Добавьте их в <a href="/client/' + encodeURIComponent(clientId) + '#employees">рабочем пространстве</a> или укажите другой <code>client_id</code>.</td></tr>';
+        return;
+      }
+      if (!list.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="meta">Никто не подходит под выбранные фильтры. Измените подразделение или должность либо нажмите «Сбросить фильтры».</td></tr>';
+        return;
+      }
+      tbody.innerHTML = list.map(e => {
+        const ls = latestSessionForEmployee(e.id);
+        const m = stageMarks(ls);
+        const sid = ls ? '<code style="font-size:0.78rem;">' + ls.id.substring(0, 8) + '…</code> · ' + ls.status : '—';
+        const sel = selectedEmployeeId === e.id ? ' row-selected' : '';
+        return '<tr class="' + sel + '" data-eid="' + e.id + '">' +
+          '<td>' + escapeHtml(empLabel(e)) + '</td>' +
+          '<td class="td-clip" title="' + escapeHtml(orgUnitDisplay(e.org_unit_id)) + '">' + escapeHtml(orgUnitDisplay(e.org_unit_id)) + '</td>' +
+          '<td class="td-position" title="' + escapeHtml(positionDisplay(e.position_id)) + '">' + escapeHtml(positionDisplay(e.position_id)) + '</td>' +
+          '<td class="num">' + m.d1 + '</td><td class="num">' + m.d2 + '</td><td class="num">' + m.d3 + '</td>' +
+          '<td class="meta">' + sid + '</td>' +
+          '<td><button type="button" class="btn-select" data-eid="' + e.id + '">Выбрать</button></td></tr>';
+      }).join('');
+      tbody.querySelectorAll('.btn-select').forEach(btn => {
+        btn.onclick = () => selectEmployee(btn.getAttribute('data-eid'));
+      });
+    }
+
+    async function loadRosterData() {
+      const errEl = document.getElementById('rosterErr');
+      errEl.hidden = true;
+      errEl.textContent = '';
+      employeesCache = [];
+      sessionsCache = [];
+      orgUnitsById = {};
+      positionsById = {};
+      try {
+        const r = await fetch('/api/employees?client_id=' + encodeURIComponent(clientId) + '&limit=500');
+        if (r.ok) {
+          const j = await r.json();
+          employeesCache = Array.isArray(j.items) ? j.items : [];
+        } else {
+          errEl.textContent = 'Не удалось загрузить сотрудников (HTTP ' + r.status + '). Проверьте, что вы открыли приложение с того же сайта и что client_id верный.';
+          errEl.hidden = false;
+        }
+      } catch (e) {
+        errEl.textContent = 'Ошибка сети при загрузке сотрудников.';
+        errEl.hidden = false;
+      }
+      try {
+        const rOu = await fetch('/api/org-units?client_id=' + encodeURIComponent(clientId) + '&limit=2000');
+        if (rOu.ok) {
+          const j = await rOu.json();
+          (j.items || []).forEach(u => { orgUnitsById[u.id] = u; });
+        }
+      } catch (_) {}
+      try {
+        const rPos = await fetch('/api/positions?client_id=' + encodeURIComponent(clientId) + '&limit=2000');
+        if (rPos.ok) {
+          const j = await rPos.json();
+          (j.items || []).forEach(p => { positionsById[p.id] = p; });
+        }
+      } catch (_) {}
+      try {
+        const r = await fetch(API + '/sessions?client_id=' + encodeURIComponent(clientId) + '&limit=500');
+        if (r.ok) {
+          const j = await r.json();
+          sessionsCache = Array.isArray(j) ? j : [];
+        } else if (errEl.hidden) {
+          errEl.textContent = 'Список сессий оценки не загрузился (HTTP ' + r.status + ').';
+          errEl.hidden = false;
+        }
+      } catch (_) {
+        sessionsCache = [];
+      }
+      fillFilterSelects();
+      try {
+        renderRoster();
+      } catch (e) {
+        document.getElementById('rosterBody').innerHTML = '<tr><td colspan="8" class="meta err">Ошибка отображения таблицы. Обновите страницу.</td></tr>';
+      }
+    }
+
+    document.getElementById('filterOrgUnit').addEventListener('change', () => renderRoster());
+    document.getElementById('filterPosition').addEventListener('change', () => renderRoster());
+    document.getElementById('btnClearFilters').addEventListener('click', () => {
+      const fo = document.getElementById('filterOrgUnit');
+      const fp = document.getElementById('filterPosition');
+      if (fo) fo.value = '';
+      if (fp) fp.value = '';
+      renderRoster();
+    });
+
+    async function loadTaxonomy() {
+      const d = await fetch(API + '/taxonomy/domains').then(r => r.json());
+      const domainId = d[0].id;
+      skills = await fetch(API + '/taxonomy/skills?domain_id=' + encodeURIComponent(domainId)).then(r => r.json());
+    }
+
+    function renderSkillsTable() {
+      const el = document.getElementById('skillsMount');
+      if (!skills.length) {
+        el.innerHTML = '<p class="meta">Нет навыков в таксономии.</p>';
+        return;
+      }
+      const rows = skills.map(s =>
+        '<tr data-skill-id="' + s.id + '"><td>' + s.title + '</td><td><code>' + s.code + '</code></td><td>' +
+        '<select class="level" aria-label="Уровень для ' + s.title.replace(/"/g, '') + '">' +
+        '<option value="0">0</option><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option>' +
+        '</select></td></tr>'
+      ).join('');
+      el.innerHTML = '<table><thead><tr><th>Навык</th><th>Код</th><th>Уровень</th></tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+
+    async function refreshSessionRow() {
+      if (!sessionId) {
+        document.getElementById('phaseOut').textContent = '—';
+        return;
+      }
+      const s = await fetch(API + '/sessions/' + sessionId).then(r => r.json());
+      document.getElementById('phaseOut').textContent = 'phase: ' + s.phase + ' · status: ' + s.status + ' · id: ' + s.id;
+    }
+
+    async function selectEmployee(eid) {
+      selectedEmployeeId = eid;
+      const e = employeesCache.find(x => x.id === eid);
+      selectedEmployeeLabel = e ? empLabel(e) : eid;
+      document.getElementById('selectedEmpName').textContent = selectedEmployeeLabel;
+      document.getElementById('workflowPanel').hidden = false;
+      document.getElementById('sessionInfo').textContent = '';
+      document.getElementById('caseOut').hidden = true;
+      document.getElementById('saveOut').textContent = '';
+
+      const ls = latestSessionForEmployee(eid);
+      sessionId = ls ? ls.id : null;
+
+      renderRoster();
+
+      document.getElementById('btnSave').disabled = true;
+      document.getElementById('skillsMount').innerHTML = '<p class="meta">Нажмите «Создать сессию и старт» или продолжите существующую.</p>';
+
+      if (ls && ls.status === 'in_progress') {
+        await loadTaxonomy();
+        renderSkillsTable();
+        document.getElementById('btnSave').disabled = false;
+        await refreshSessionRow();
+      } else if (ls && ls.status === 'draft') {
+        sessionId = ls.id;
+        await refreshSessionRow();
+      } else if (ls && ls.status === 'completed') {
+        document.getElementById('skillsMount').innerHTML = '<p class="meta">Последняя сессия по этому сотруднику завершена. Нажмите «Создать сессию и старт», чтобы начать новую оценку.</p>';
+        document.getElementById('sessionInfo').innerHTML = 'Статус: <strong>completed</strong> (сессия ' + ls.id.substring(0, 8) + '…).';
+        document.getElementById('btnSave').disabled = true;
+        sessionId = null;
+        await refreshSessionRow();
+      } else {
+        sessionId = null;
+        document.getElementById('phaseOut').textContent = '—';
+      }
+    }
+
+    document.getElementById('btnCreate').onclick = async () => {
+      document.getElementById('sessionInfo').textContent = '';
+      if (!selectedEmployeeId) return;
+      await loadTaxonomy();
+      renderSkillsTable();
+
+      const existing = latestSessionForEmployee(selectedEmployeeId);
+      if (existing && existing.status === 'completed') {
+        const r = await fetch(API + '/sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: clientId, employee_id: selectedEmployeeId })
+        });
+        const j = await r.json();
+        if (!r.ok) { document.getElementById('sessionInfo').innerHTML = '<span class="err">Ошибка создания</span>'; return; }
+        sessionId = j.id;
+      } else if (!sessionId) {
+        const r = await fetch(API + '/sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: clientId, employee_id: selectedEmployeeId })
+        });
+        const j = await r.json();
+        if (!r.ok) { document.getElementById('sessionInfo').innerHTML = '<span class="err">Ошибка</span>'; return; }
+        sessionId = j.id;
+      }
+
+      const row = await fetch(API + '/sessions/' + sessionId).then(r => r.json());
+      if (row.status === 'draft') {
+        await fetch(API + '/sessions/' + sessionId + '/start', { method: 'POST' });
+      }
+      document.getElementById('sessionInfo').innerHTML = 'Сессия: <code>' + sessionId + '</code>';
+      document.getElementById('btnSave').disabled = false;
+      await refreshSessionRow();
+      await loadRosterData();
+    };
+
+    document.getElementById('btnCase').onclick = async () => {
+      const pre = document.getElementById('caseOut');
+      if (!sessionId || !skills[0]) {
+        pre.hidden = false;
+        pre.textContent = 'Нужна активная сессия (нажмите «Создать сессию и старт»).';
+        return;
+      }
+      const r = await fetch(API + '/sessions/' + sessionId + '/case?skill_id=' + encodeURIComponent(skills[0].id));
+      const j = await r.json();
+      pre.hidden = false;
+      pre.textContent = r.ok ? j.text : JSON.stringify(j);
+    };
+
+    document.getElementById('btnSave').onclick = async () => {
+      const out = document.getElementById('saveOut');
+      out.textContent = '';
+      if (!sessionId) return;
+      const ratings = [];
+      document.querySelectorAll('#skillsMount tbody tr').forEach(tr => {
+        const sid = tr.getAttribute('data-skill-id');
+        const lv = parseInt(tr.querySelector('select.level').value, 10);
+        ratings.push({ skill_id: sid, level: lv });
+      });
+      const r = await fetch(API + '/sessions/' + sessionId + '/manager-ratings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ratings })
+      });
+      const j = await r.json();
+      if (r.ok) {
+        out.innerHTML = '<span class="ok">Сохранено</span> (' + j.length + ' навыков)';
+        await fetch(API + '/sessions/' + sessionId + '/complete', { method: 'POST' }).catch(() => {});
+        await refreshSessionRow();
+        await loadRosterData();
+      } else {
+        out.innerHTML = '<span class="err">Ошибка</span> ' + JSON.stringify(j);
+      }
+    };
+
+    document.getElementById('btnRefreshRoster').onclick = () => loadRosterData();
+
+    loadRosterData();
+  </script>
+</body>
+</html>
