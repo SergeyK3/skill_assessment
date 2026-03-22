@@ -1,3 +1,4 @@
+# route: (pytest) | file: tests/conftest.py
 """
 Подключаем корень typical_infrastructure в sys.path, чтобы пакет ``app`` находился при pytest.
 
