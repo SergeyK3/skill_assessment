@@ -1,3 +1,4 @@
+# route: (service layer) | file: skill_assessment/services/assessment_service.py
 """Создание сессий и фиксация результатов."""
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from skill_assessment.domain.entities import AssessmentSessionStatus, EvidenceKind, ProficiencyLevel
+from skill_assessment.domain.entities import AssessmentSessionStatus, EvidenceKind, ProficiencyLevel, SessionPhase
 from skill_assessment.infrastructure.db_models import (
     AssessmentSessionRow,
     SkillAssessmentResultRow,
@@ -19,7 +20,10 @@ from skill_assessment.infrastructure.db_models import (
 )
 from skill_assessment.schemas.api import (
     AssessmentSessionOut,
+    CaseTextOut,
+    ManagerRatingsBulk,
     SessionCreate,
+    SessionPhaseUpdate,
     SkillAssessmentResultOut,
     SkillDomainOut,
     SkillOut,
@@ -28,11 +32,13 @@ from skill_assessment.schemas.api import (
 
 
 def _session_out(row: AssessmentSessionRow) -> AssessmentSessionOut:
+    ph = getattr(row, "phase", None) or SessionPhase.DRAFT.value
     return AssessmentSessionOut(
         id=row.id,
         client_id=row.client_id,
         employee_id=row.employee_id,
         status=AssessmentSessionStatus(row.status),
+        phase=SessionPhase(ph),
         started_at=row.started_at,
         completed_at=row.completed_at,
         created_at=row.created_at,
@@ -68,6 +74,7 @@ def create_session(db: Session, body: SessionCreate) -> AssessmentSessionOut:
         client_id=body.client_id,
         employee_id=body.employee_id,
         status=AssessmentSessionStatus.DRAFT.value,
+        phase=SessionPhase.DRAFT.value,
         started_at=None,
         completed_at=None,
     )
@@ -99,6 +106,7 @@ def start_session(db: Session, session_id: str) -> AssessmentSessionOut:
     if row.status != AssessmentSessionStatus.DRAFT.value:
         raise HTTPException(status_code=400, detail="session_not_draft")
     row.status = AssessmentSessionStatus.IN_PROGRESS.value
+    row.phase = SessionPhase.PART2.value
     row.started_at = datetime.utcnow()
     db.commit()
     db.refresh(row)
@@ -110,10 +118,91 @@ def complete_session(db: Session, session_id: str) -> AssessmentSessionOut:
     if row is None:
         raise HTTPException(status_code=404, detail="session_not_found")
     row.status = AssessmentSessionStatus.COMPLETED.value
+    row.phase = SessionPhase.COMPLETED.value
     row.completed_at = datetime.utcnow()
     db.commit()
     db.refresh(row)
     return _session_out(row)
+
+
+def set_session_phase(db: Session, session_id: str, body: SessionPhaseUpdate) -> AssessmentSessionOut:
+    row = db.get(AssessmentSessionRow, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    row.phase = body.phase.value
+    db.commit()
+    db.refresh(row)
+    return _session_out(row)
+
+
+def get_case_stub(db: Session, session_id: str, skill_id: str) -> CaseTextOut:
+    session = db.get(AssessmentSessionRow, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    skill = db.get(SkillRow, skill_id)
+    if skill is None:
+        raise HTTPException(status_code=404, detail="skill_not_found")
+    text = _template_case_text(skill)
+    return CaseTextOut(
+        session_id=session_id,
+        skill_id=skill.id,
+        skill_code=skill.code,
+        skill_title=skill.title,
+        text=text,
+        source="template",
+    )
+
+
+def _template_case_text(skill: SkillRow) -> str:
+    return (
+        f"**Ситуация (заглушка).** Навык в фокусе: «{skill.title}» ({skill.code}).\n\n"
+        "Ключевой клиент требует дополнительные условия, угрожая уйти к конкуренту; "
+        "маржа по сделке на грани минимума, регламент ограничивает уступки без согласования. "
+        "До принятия решения остался один рабочий день.\n\n"
+        "**Вопрос:** Какие шаги вы предпримете и как оформите решение?\n\n"
+        "_Позже текст будет сгенерирован моделью по тем же входам, что в демо "
+        "(контекст сессии, регламенты, KPI)._"
+    )
+
+
+def save_manager_ratings(db: Session, session_id: str, body: ManagerRatingsBulk) -> list[SkillAssessmentResultOut]:
+    session_row = db.get(AssessmentSessionRow, session_id)
+    if session_row is None:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    mgr_note = "Оценка руководителя (Part 3)"
+    touched: list[SkillAssessmentResultRow] = []
+    for item in body.ratings:
+        skill = db.get(SkillRow, item.skill_id)
+        if skill is None:
+            raise HTTPException(status_code=404, detail="skill_not_found")
+        existing = db.scalars(
+            select(SkillAssessmentResultRow).where(
+                SkillAssessmentResultRow.session_id == session_id,
+                SkillAssessmentResultRow.skill_id == item.skill_id,
+            )
+        ).first()
+        if existing:
+            notes = _evidence_from_json(existing.evidence_json)
+            notes[EvidenceKind.MANAGER] = notes.get(EvidenceKind.MANAGER) or mgr_note
+            existing.level = int(item.level.value)
+            existing.evidence_json = _evidence_to_json(notes)
+            touched.append(existing)
+        else:
+            rid = str(uuid.uuid4())
+            row = SkillAssessmentResultRow(
+                id=rid,
+                session_id=session_id,
+                skill_id=item.skill_id,
+                level=int(item.level.value),
+                evidence_json=_evidence_to_json({EvidenceKind.MANAGER: mgr_note}),
+            )
+            db.add(row)
+            touched.append(row)
+    session_row.phase = SessionPhase.PART3.value
+    db.commit()
+    for r in touched:
+        db.refresh(r)
+    return [_result_out(r) for r in touched]
 
 
 def add_result(db: Session, session_id: str, body: SkillResultCreate) -> SkillAssessmentResultOut:

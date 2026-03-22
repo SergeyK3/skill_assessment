@@ -1,3 +1,4 @@
+# route: (startup seed) | file: skill_assessment/services/taxonomy_seed.py
 """Демо-таксономия при пустых таблицах."""
 
 from __future__ import annotations
