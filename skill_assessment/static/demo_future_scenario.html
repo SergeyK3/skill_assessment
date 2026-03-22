@@ -1,0 +1,130 @@
+<!-- route: GET /skill-assessment/future-demo | file: skill_assessment/static/demo_future_scenario.html -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Превью экзамена — вымышленный сценарий</title>
+  <link rel="stylesheet" href="/static/shared/layout.css">
+  <style>
+    .wrap { max-width: 720px; padding: 2rem; }
+    .badge { display: inline-block; font-size: 0.72rem; padding: 0.2rem 0.5rem; border-radius: 4px; background: rgba(124,58,237,0.2); color: var(--accent); margin-right: 0.35rem; }
+    .block { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.25rem; margin-top: 1rem; }
+    .block h2 { font-size: 1rem; margin: 0 0 0.75rem 0; color: var(--accent); }
+    .dialog { font-size: 0.9rem; line-height: 1.55; }
+    .dialog .q { color: var(--text-muted); margin-top: 0.65rem; }
+    .dialog .a { margin: 0.25rem 0 0 1rem; border-left: 2px solid var(--accent); padding-left: 0.75rem; }
+    .score { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.5rem; font-size: 0.88rem; }
+    .pill { padding: 0.15rem 0.5rem; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); }
+    .case-box { background: rgba(124,58,237,0.08); border: 1px dashed var(--accent); padding: 1rem; border-radius: 8px; margin: 0.75rem 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 0.5rem; }
+    th, td { border-bottom: 1px solid var(--border); padding: 0.45rem 0.5rem; text-align: left; }
+    th { color: var(--text-muted); font-weight: 500; }
+    .muted { font-size: 0.82rem; color: var(--text-muted); margin-top: 0.75rem; }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <div class="sidebar-brand">Превью</div>
+        <a href="/skill-assessment" class="sidebar-item">← Skill assessment</a>
+        <a href="/docs" class="sidebar-item api-link">API</a>
+      </div>
+    </aside>
+    <main class="main">
+      <div class="content wrap">
+        <p class="meta" style="margin:0;"><span class="badge">вымысел</span> Не реальные данные — демонстрация того, как может выглядеть отчёт после внедрения.</p>
+        <h1 style="margin:0.5rem 0 0 0; font-size:1.35rem;">Экзамен: коммерческий директор</h1>
+        <p class="meta">Сотрудник: <strong>Алексей В.</strong>, коммерческий директор · Подразделение: <strong>Отдел продаж</strong> · Сессия: <code>demo-2026-03-22</code></p>
+        <p class="meta">В фокусе по регламенту: навыки <strong>«Выявление потребности клиента»</strong> и <strong>«Переговоры»</strong> (1–2 навыка из чеклиста).</p>
+
+        <div class="block">
+          <h2>Часть 1 — устное интервью с LLM (регламенты, KPI)</h2>
+          <p class="meta" style="margin-top:0;">Контекст для модели: регламент должности «Коммерческий директор», KPI отдела продаж (конверсия, маржа), фрагменты из папки инструкций (если есть).</p>
+          <div class="dialog">
+            <div class="q"><strong>LLM:</strong> Какой KPI отдела продаж вы считаете главным в текущем квартале и как он связан с регламентом по ведению воронки?</div>
+            <div class="a"><strong>Алексей:</strong> Главное — конверсия из лида в сделку не ниже 25%. По регламенту каждая сделка должна иметь этапы в CRM; я требую, чтобы менеджеры не пропускали квалификацию — это напрямую влияет на конверсию.</div>
+            <div class="q"><strong>LLM:</strong> Что вы делаете, если KPI по марже проседает при выполнении плана по объёму?</div>
+            <div class="a"><strong>Алексей:</strong> Смотрим структуру скидок и условия; при необходимости останавливаем необоснованные уступки. В регламенте прописано согласование скидок выше порога — я это контролирую.</div>
+          </div>
+          <div class="score">
+            <span class="pill">Оценка LLM по части 1 (условная)</span>
+            <span>Согласованность ответов с регламентом: <strong>2 / 3</strong> (типовая ситуация)</span>
+          </div>
+          <p class="muted">Комментарий модели (условный): «Ответы показывают понимание KPI и связи с CRM; глубина по марже — частичная — без детализации порогов скидок из документа.»</p>
+        </div>
+
+        <div class="block">
+          <h2>Часть 2 — кейс от LLM (ситуационная задача)</h2>
+          <div class="case-box">
+            <strong>Ситуация.</strong> Ключевой клиент требует дополнительную скидку 12% сверх утверждённой, угрожает уйти к конкуренту. Ваша маржа по сделке на грани минимума; регламент допускает скидку не более 7% без согласования с финдиректором. У вас один день до подписания.
+            <br><br>
+            <strong>Вопрос:</strong> Какие шаги вы предпримете и как оформите решение?
+          </div>
+          <div class="dialog">
+            <div class="a"><strong>Решение Алексея (условно):</strong> Не соглашаюсь на 12% сразу; провожу созвон, уточняю объём и срок контракта; предлагаю компромисс 7% + неценовые условия. Параллельно инициирую согласование с финдиректором на исключение, если объём оправдывает отступление от маржи.</div>
+          </div>
+          <div class="score">
+            <span class="pill">Решение принято?</span> <strong>Да</strong>, в рамках регламента (частичное согласование)
+          </div>
+          <div class="score">
+            <span class="pill">Насколько полно</span> <strong>2 / 3</strong> — учтены лимиты и эскалация; мало конкретики по доказательствам ценности для клиента
+          </div>
+          <p class="muted">Навыки в фокусе кейса: <strong>Переговоры</strong>, <strong>Выявление потребности</strong> (через уточнение объёма/срока).</p>
+        </div>
+
+        <div class="block">
+          <h2>Часть 3 — оценка руководителем (генеральный директор)</h2>
+          <p class="meta" style="margin-top:0;">По методике из PDF: «кто оценивает» — непосредственный руководитель / вышестоящий по должности.</p>
+          <table>
+            <thead>
+              <tr><th>Навык</th><th>Оценка руководителя (шкала 0–3)</th><th>Краткий комментарий</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Выявление потребности</td>
+                <td><strong>2</strong></td>
+                <td>На реальных сделках видит запрос клиента; иногда уходит в «продукт» раньше времени.</td>
+              </tr>
+              <tr>
+                <td>Переговоры</td>
+                <td><strong>3</strong></td>
+                <td>Устойчив в сложных переговорах; умеет торговаться без разрушения отношений.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="block">
+          <h2>Сводка «как может выглядеть» итог</h2>
+          <table>
+            <thead>
+              <tr><th>Навык</th><th>Часть 1 (LLM, реглам.)</th><th>Часть 2 (кейс LLM)</th><th>Часть 3 (руководитель)</th><th>Итог (пример весов 0,3 / 0,4 / 0,3)</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Выявление потребности</td>
+                <td>2</td>
+                <td>2</td>
+                <td>2</td>
+                <td><strong>2,0</strong></td>
+              </tr>
+              <tr>
+                <td>Переговоры</td>
+                <td>2</td>
+                <td>2</td>
+                <td>3</td>
+                <td><strong>2,3</strong></td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="muted">Веса и формула — предмет методики; здесь только иллюстрация. Реальная система может хранить три источника отдельно и не смешивать их без правил.</p>
+        </div>
+
+        <p class="meta"><a href="/skill-assessment">← Назад</a></p>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

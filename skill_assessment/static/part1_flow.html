@@ -1,0 +1,144 @@
+<!-- route: GET /api/skill-assessment/ui/part1 | file: skill_assessment/static/part1_flow.html -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Part 1 — интервью (текст)</title>
+  <link rel="stylesheet" href="/static/shared/layout.css">
+  <style>
+    .wrap { max-width: 720px; padding: 2rem; }
+    .block { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.25rem; margin-top: 1rem; }
+    .block h2 { font-size: 1rem; margin: 0 0 0.75rem 0; color: var(--accent); }
+    label { display: block; font-size: 0.82rem; color: var(--text-muted); margin-top: 0.5rem; }
+    textarea { width: 100%; min-height: 4rem; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: inherit; font-family: inherit; font-size: 0.88rem; box-sizing: border-box; }
+    select { padding: 0.35rem 0.5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: inherit; }
+    .row-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.75rem; }
+    button { padding: 0.45rem 0.85rem; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: inherit; cursor: pointer; font-size: 0.88rem; }
+    button.primary { background: rgba(124,58,237,0.25); border-color: var(--accent); color: var(--accent); }
+    .ok { color: var(--success); }
+    .err { color: var(--error); }
+    code { font-size: 0.85rem; color: var(--accent); }
+    .meta { font-size: 0.85rem; color: var(--text-muted); margin: 0.35rem 0; }
+    pre.log { font-size: 0.8rem; white-space: pre-wrap; max-height: 12rem; overflow: auto; padding: 0.5rem; background: var(--bg); border-radius: 6px; border: 1px solid var(--border); }
+    .sidebar-section-label { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0.75rem 0 0.35rem 0; }
+    .prep-banner { font-size: 0.85rem; line-height: 1.45; padding: 0.65rem 0.75rem; background: rgba(124,58,237,0.08); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.75rem; }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <div class="sidebar-brand">Part 1</div>
+        <a id="linkBackSa" href="/skill-assessment" class="sidebar-item">← Skill assessment</a>
+        <div class="sidebar-section-label">Ядро — подготовка</div>
+        <a href="/clients" class="sidebar-item">Организации</a>
+        <a href="/wizard" class="sidebar-item">Мастер onboarding</a>
+        <a id="navCoreWs" class="sidebar-item" href="/clients" hidden>Рабочее пространство</a>
+        <a id="navCoreEmp" class="sidebar-item" href="/clients" hidden>Сотрудники</a>
+        <a id="navCorePos" class="sidebar-item" href="/clients" hidden>Должности</a>
+        <a href="/docs" class="sidebar-item api-link">API</a>
+      </div>
+    </aside>
+    <main class="main">
+      <div class="content wrap">
+        <h1 style="margin-top:0;font-size:1.25rem;">Part 1 — устное интервью (текст)</h1>
+        <p id="prepHint" class="prep-banner" hidden>Для привязки сессии к организации откройте страницу из ядра с <code>client_id</code> (<a href="/clients">организации</a> или <strong>/client/…</strong> → Приложения).</p>
+        <p class="meta">Без аудио: имитация цепочки LLM → пользователь (как после STT). Реплики сохраняются в сессии и попадают в отчёт.</p>
+
+        <div class="block">
+          <h2>Сессия</h2>
+          <div class="row-actions">
+            <button type="button" class="primary" id="btnCreate">Создать сессию и старт</button>
+            <span id="sessionInfo" class="meta"></span>
+          </div>
+        </div>
+
+        <div class="block">
+          <h2>Добавить реплику</h2>
+          <label for="role">Роль</label>
+          <select id="role" aria-label="Роль реплики">
+            <option value="llm">llm (вопрос модели)</option>
+            <option value="user">user (ответ после STT)</option>
+          </select>
+          <label for="text">Текст</label>
+          <textarea id="text" placeholder="Текст реплики…"></textarea>
+          <div class="row-actions">
+            <button type="button" class="primary" id="btnAdd" disabled>Добавить в сессию</button>
+          </div>
+          <p id="addOut" class="meta"></p>
+        </div>
+
+        <div class="block">
+          <h2>Текущий диалог</h2>
+          <pre class="log" id="logOut">—</pre>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script>
+    const API = '/api/skill-assessment';
+    const clientId = (function() {
+      const c = new URLSearchParams(window.location.search).get('client_id');
+      return c && c.trim() ? c.trim() : 'demo_part1';
+    })();
+    (function() {
+      const q = new URLSearchParams(window.location.search).get('client_id');
+      const a = document.getElementById('linkBackSa');
+      if (a) a.href = q && q.trim() ? '/skill-assessment?client_id=' + encodeURIComponent(q.trim()) : '/skill-assessment';
+      const hint = document.getElementById('prepHint');
+      if (hint && (!q || !q.trim())) hint.hidden = false;
+      if (q && q.trim()) {
+        const base = '/client/' + encodeURIComponent(q.trim());
+        [['navCoreWs', ''], ['navCoreEmp', '#employees'], ['navCorePos', '#positions']].forEach(([id, hash]) => {
+          const n = document.getElementById(id);
+          if (n) { n.href = base + hash; n.hidden = false; }
+        });
+      }
+    })();
+    let sessionId = null;
+
+    async function refreshLog() {
+      const el = document.getElementById('logOut');
+      if (!sessionId) { el.textContent = '—'; return; }
+      const r = await fetch(API + '/sessions/' + sessionId + '/part1/turns');
+      const j = await r.json();
+      if (!r.ok) { el.textContent = JSON.stringify(j); return; }
+      el.textContent = j.length ? j.map(t => '[' + t.seq + '] ' + t.role + ': ' + t.text).join('\n') : '(пусто)';
+    }
+
+    document.getElementById('btnCreate').onclick = async () => {
+      document.getElementById('sessionInfo').textContent = '';
+      const r = await fetch(API + '/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_id: clientId }) });
+      const j = await r.json();
+      if (!r.ok) return;
+      sessionId = j.id;
+      await fetch(API + '/sessions/' + sessionId + '/start', { method: 'POST' });
+      document.getElementById('sessionInfo').innerHTML = 'Сессия: <code>' + sessionId + '</code>';
+      document.getElementById('btnAdd').disabled = false;
+      await refreshLog();
+    };
+
+    document.getElementById('btnAdd').onclick = async () => {
+      const out = document.getElementById('addOut');
+      out.textContent = '';
+      const role = document.getElementById('role').value;
+      const text = document.getElementById('text').value.trim();
+      if (!sessionId || !text) return;
+      const r = await fetch(API + '/sessions/' + sessionId + '/part1/turns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ turns: [{ role: role, text: text }] })
+      });
+      const j = await r.json();
+      if (r.ok) {
+        out.innerHTML = '<span class="ok">Сохранено</span>, seq=' + j[0].seq;
+        document.getElementById('text').value = '';
+        await refreshLog();
+      } else {
+        out.innerHTML = '<span class="err">Ошибка</span> ' + JSON.stringify(j);
+      }
+    };
+  </script>
+</body>
+</html>

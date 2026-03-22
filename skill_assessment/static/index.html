@@ -1,4 +1,4 @@
-<!-- served by skill_assessment.runner at GET /skill-assessment -->
+<!-- route: GET /skill-assessment | file: skill_assessment/static/index.html -->
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -9,10 +9,28 @@
   <style>
     .wrap { max-width: 560px; padding: 2rem; }
     .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; margin-top: 1rem; }
+    .org-banner { background: rgba(124,58,237,0.1); border: 1px solid rgba(124,58,237,0.35); border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 1rem; font-size: 0.9rem; line-height: 1.45; }
+    .core-nav { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.75rem; }
+    .core-nav a { display: block; padding: 0.45rem 0.65rem; border-radius: 6px; background: var(--surface); border: 1px solid var(--border); text-decoration: none; font-size: 0.88rem; }
+    .core-nav a:hover { border-color: var(--accent); background: rgba(124,58,237,0.08); }
+    .core-nav .label { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.25rem; }
     code { font-size: 0.88rem; color: var(--accent); }
     .ok { color: var(--success); }
     .err { color: var(--error); }
     a { color: var(--accent); }
+    .cta-row { margin-top: 1rem; }
+    .btn-primary {
+      display: inline-block; padding: 0.65rem 1.1rem; border-radius: 8px;
+      background: var(--accent); color: #fff !important; text-decoration: none !important;
+      font-weight: 600; font-size: 0.95rem;
+    }
+    .btn-primary:hover { filter: brightness(1.08); }
+    details.dev-only { margin-top: 1.25rem; border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; background: var(--bg); }
+    details.dev-only summary { cursor: pointer; color: var(--text-muted); font-size: 0.88rem; }
+    details.dev-only .meta { margin-top: 0.5rem; }
+    details.core-prep { margin-top: 1.25rem; border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; background: var(--surface); }
+    details.core-prep summary { cursor: pointer; font-size: 0.92rem; color: var(--text-muted); }
+    details.core-prep[open] summary { margin-bottom: 0.75rem; }
   </style>
 </head>
 <body>
@@ -20,24 +38,112 @@
     <aside class="sidebar">
       <div class="sidebar-top">
         <div class="sidebar-brand">Skill assessment</div>
-        <a href="/clients" class="sidebar-item">← Клиенты</a>
+        <div class="sidebar-section-label" style="margin-top:0.5rem;">Ядро (подготовка)</div>
+        <a id="navClients" href="/clients" class="sidebar-item">Организации (клиенты)</a>
+        <a href="/wizard" class="sidebar-item">Мастер onboarding</a>
+        <a id="navWorkspace" href="/clients" class="sidebar-item" hidden>Рабочее пространство</a>
+        <a id="navOrgUnits" href="/clients" class="sidebar-item" hidden>Подразделения</a>
+        <a id="navPositions" href="/clients" class="sidebar-item" hidden>Должности</a>
+        <a id="navEmployees" href="/clients" class="sidebar-item" hidden>Сотрудники</a>
+        <a id="navRegs" href="/clients" class="sidebar-item" hidden>Регламенты и KPI</a>
+        <div class="sidebar-section-label" style="margin-top:0.75rem;">Плагин</div>
         <a href="/docs" class="sidebar-item api-link">API (Swagger)</a>
       </div>
     </aside>
     <main class="main">
       <div class="content wrap">
-        <h1 style="margin-top:0;font-size:1.25rem;">Оценка навыков (черновик)</h1>
-        <p class="meta">Пакет <strong>skill_assessment</strong> подключён через <code>skill_assessment.runner:app</code>; ядро без изменений.</p>
-        <div class="card">
-          <div><strong>GET</strong> <code>/api/skill-assessment/health</code></div>
-          <p id="healthOut" class="meta" style="margin:0.75rem 0 0 0;">Загрузка…</p>
+        <h1 style="margin-top:0;font-size:1.25rem;">Оценка навыков — вход</h1>
+        <p class="meta" style="margin:0.5rem 0 0 0;max-width:36rem;">Эта страница — вход. Рабочий сценарий (сотрудники, сессия, этапы) — по кнопке ниже откроется <strong>другой</strong> URL: <code>/api/skill-assessment/workspace</code>.</p>
+        <div id="orgContext" class="org-banner" hidden></div>
+        <div class="cta-row">
+          <a id="linkMainUi" class="btn-primary" href="/api/skill-assessment/workspace">Открыть интерфейс оценки</a>
         </div>
-        <p class="meta" style="margin-top:1rem;">Полный список методов — в <a href="/docs">Swagger</a> (тег <code>skill-assessment</code>).</p>
-        <p class="meta" style="margin-top:1.5rem;"><a href="/clients">Организации</a> — рабочее пространство клиента. Ссылку «Приложения» в сайдбаре ядра можно добавить опциональным патчем (см. README пакета).</p>
+        <details class="core-prep" id="corePrepDetails">
+          <summary>Подготовка в ядре (если ещё не делали)</summary>
+          <div class="card" id="corePrepCard" style="margin-top:0;border:none;padding:0;">
+            <p class="meta" style="margin:0;">Нужны организация, подразделения, должности и сотрудники — иначе сессия будет «пустой». Удобнее всего заполнить всё в <strong>рабочем пространстве</strong> организации.</p>
+            <div class="core-nav" id="corePrepLinks" style="margin-top:0.75rem;">
+              <div><span class="label">Общее</span><a href="/clients">Список организаций</a><a href="/wizard">Мастер onboarding</a></div>
+              <div id="corePrepOrgBlock" hidden>
+                <span class="label">Эта организация</span>
+                <a id="prepWs" href="#">Рабочее пространство</a>
+                <a id="prepOrg" href="#">Подразделения</a>
+                <a id="prepPos" href="#">Должности</a>
+                <a id="prepEmp" href="#">Сотрудники</a>
+                <a id="prepRegs" href="#">Регламенты и KPI</a>
+              </div>
+            </div>
+          </div>
+        </details>
+        <details class="dev-only">
+          <summary>Технические ссылки и API (для разработчиков)</summary>
+          <p class="meta">Удобный вход из ядра: <strong>Клиенты</strong> или <strong>/client/…</strong> → «Приложения» — в URL передаётся <code>client_id</code>.</p>
+          <p class="meta">Лендинг: <a id="linkSelfUi" href="/api/skill-assessment/landing"><code>/api/skill-assessment/landing</code></a> · короткий <code>/skill-assessment</code> редиректит сюда (query сохраняется).</p>
+          <p class="meta">Рабочий UI: <a href="/api/skill-assessment/workspace"><code>/api/skill-assessment/workspace</code></a> (кнопка выше). Устаревший <code>/api/skill-assessment/ui</code> редиректит сюда.</p>
+          <div class="card" style="margin-top:0.75rem;">
+            <div><strong>GET</strong> <code>/api/skill-assessment/health</code></div>
+            <p id="healthOut" class="meta" style="margin:0.75rem 0 0 0;">Загрузка…</p>
+          </div>
+          <p class="meta" style="margin-top:0.75rem;">Методы в <a href="/docs">Swagger</a> (тег <code>skill-assessment</code>).</p>
+          <p class="meta">Демо-сценарий: <a id="linkFuture" href="/skill-assessment/future-demo">превью экзамена</a> · Part 3: <a id="linkPart3" href="/skill-assessment/part3">форма</a> · Part 1: <a id="linkPart1" href="/skill-assessment/part1">форма</a>.</p>
+          <p class="meta">Импорт классификатора: <code>POST …/taxonomy/import-classifier</code> (.xlsx). Отчёт: <code>GET …/sessions/{id}/report</code> и <code>…/report/html</code>.</p>
+        </details>
       </div>
     </main>
   </div>
   <script>
+    function saQuerySuffix() {
+      const cid = new URLSearchParams(window.location.search).get('client_id');
+      return cid ? '?client_id=' + encodeURIComponent(cid) : '';
+    }
+    function saApplyClientContext() {
+      const q = saQuerySuffix();
+      ['linkMainUi', 'linkSelfUi', 'linkFuture', 'linkFutureApi', 'linkPart3', 'linkPart1'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const base = el.getAttribute('href').split('?')[0];
+        el.href = base + q;
+      });
+      const cid = new URLSearchParams(window.location.search).get('client_id');
+      const banner = document.getElementById('orgContext');
+      const navWs = document.getElementById('navWorkspace');
+      const navIds = ['navOrgUnits', 'navPositions', 'navEmployees', 'navRegs'];
+      function setCoreLinks(id) {
+        const base = '/client/' + encodeURIComponent(id);
+        if (navWs) { navWs.href = base; navWs.hidden = false; }
+        const h = { navOrgUnits: '#org', navPositions: '#positions', navEmployees: '#employees', navRegs: '#client-regs' };
+        navIds.forEach(nid => {
+          const el = document.getElementById(nid);
+          if (el) { el.href = base + (h[nid] || ''); el.hidden = false; }
+        });
+        const pb = document.getElementById('corePrepOrgBlock');
+        if (pb) pb.hidden = false;
+        const prep = ['prepWs', 'prepOrg', 'prepPos', 'prepEmp', 'prepRegs'];
+        const prepHash = ['', '#org', '#positions', '#employees', '#client-regs'];
+        prep.forEach((pid, i) => {
+          const el = document.getElementById(pid);
+          if (el) el.href = base + prepHash[i];
+        });
+      }
+      if (cid && cid.trim()) setCoreLinks(cid.trim());
+      if (!banner) return;
+      if (!cid) {
+        banner.innerHTML = '<strong>Организация в URL не выбрана.</strong> Сначала создайте и наполните организацию в ядре: <a href="/wizard">мастер</a> или <a href="/clients">список клиентов</a>, затем откройте оценку из <strong>/client/…</strong> → Приложения.';
+        banner.hidden = false;
+        return;
+      }
+      fetch('/api/clients/' + encodeURIComponent(cid))
+        .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+        .then(c => {
+          banner.innerHTML = 'Организация: <strong>' + (c.name || '') + '</strong> <span class="meta">(' + (c.code || '') + ')</span> · сессии с <code>client_id</code> этой организации. Должности и сотрудники — в <a href="/client/' + encodeURIComponent(cid) + '#employees">рабочем пространстве</a>.';
+          banner.hidden = false;
+        })
+        .catch(() => {
+          banner.innerHTML = '<span class="err">Клиент не найден.</span> Проверьте <code>client_id</code> в URL. <a href="/clients">← Клиенты</a>';
+          banner.hidden = false;
+        });
+    }
+    saApplyClientContext();
     (async () => {
       const el = document.getElementById('healthOut');
       try {
