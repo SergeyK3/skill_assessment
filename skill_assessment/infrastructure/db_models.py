@@ -1,3 +1,4 @@
+# route: (ORM / tables sa_*) | file: skill_assessment/infrastructure/db_models.py
 """
 ORM-модели skill assessment на общем Base ядра (один SQLite с typical_infrastructure).
 
@@ -8,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -51,12 +52,32 @@ class AssessmentSessionRow(Base, TimestampMixin):
     client_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     employee_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    phase: Mapped[str] = mapped_column(String(32), nullable=False, default="draft", index=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     results: Mapped[list[SkillAssessmentResultRow]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
+    part1_turns: Mapped[list["SessionPart1TurnRow"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan", order_by="SessionPart1TurnRow.seq"
+    )
+
+
+class SessionPart1TurnRow(Base):
+    """Реплики Part 1 (устовое интервью): храним текст; аудио — внешний слой STT/TTS."""
+
+    __tablename__ = "sa_session_part1_turns"
+    __table_args__ = (UniqueConstraint("session_id", "seq", name="uq_sa_part1_session_seq"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sa_assessment_sessions.id"), nullable=False, index=True)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    session: Mapped[AssessmentSessionRow] = relationship(back_populates="part1_turns")
 
 
 class SkillAssessmentResultRow(Base, TimestampMixin):

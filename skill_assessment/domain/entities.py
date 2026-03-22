@@ -1,3 +1,4 @@
+# route: (domain entities) | file: skill_assessment/domain/entities.py
 """
 Черновая модель сущностей skill assessment (без привязки к БД ядра).
 
@@ -36,6 +37,24 @@ class AssessmentSessionStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class SessionPhase(str, Enum):
+    """Текущая фаза сценария (сессия → части → отчёт)."""
+
+    DRAFT = "draft"
+    PART2 = "part2"  # кейс / миниэкзамен
+    PART3 = "part3"  # оценка руководителем
+    PART1 = "part1"  # устное интервью + STT/TTS (позже)
+    REPORT = "report"  # отчёт сформирован / к просмотру
+    COMPLETED = "completed"
+
+
+class Part1TurnRole(str, Enum):
+    """Реплика в Part 1: текст после STT (пользователь) или реплика LLM (до TTS на клиенте)."""
+
+    LLM = "llm"
+    USER = "user"
+
+
 class SkillDomain(BaseModel):
     """Укрупнённая область (аналог «домена» в таксономии)."""
 
@@ -60,6 +79,7 @@ class AssessmentSession(BaseModel):
     client_id: str = Field(description="Организация в терминах ядра (clients.id)")
     employee_id: str | None = Field(default=None, description="Сотрудник в ядре, если есть")
     status: AssessmentSessionStatus = AssessmentSessionStatus.DRAFT
+    phase: SessionPhase = SessionPhase.DRAFT
     started_at: datetime | None = None
     completed_at: datetime | None = None
 
