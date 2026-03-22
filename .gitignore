@@ -1,3 +1,4 @@
+# route: (N/A) | file: .gitignore
 .venv/
 __pycache__/
 *.py[cod]
@@ -9,3 +10,6 @@ build/
 .mypy_cache/
 .ruff_cache/
 *.egg
+
+*.db
+

@@ -1,3 +1,5 @@
+<!-- route: (documentation) | file: README.md -->
+
 # skill-assessment
 
 Отдельный пакет: API и черновой UI **оценки навыков**, подключаемые к [typical_infrastructure](https://github.com/SergeyK3/typical_infrastructure) **v1.0.0** без изменений в upstream-ядре и **без** записи в `requirements.txt` ядра.

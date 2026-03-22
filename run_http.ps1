@@ -1,3 +1,4 @@
+# route: (script / uvicorn) | file: run_http.ps1
 # Запуск приложения с ядром и skill_assessment (из каталога typical_infrastructure).
 # Пример:
 #   .\run_http.ps1 -CoreRoot "D:\...\typical_infrastructure" -SkillPkgRoot "D:\...\repo\skill_assessment"
