@@ -10,6 +10,26 @@ import pytest
 from skill_assessment.integration import hr_core
 
 
+def test_employee_greeting_label_name_patronymic() -> None:
+    s = hr_core.EmployeeSnapshot(
+        id="e1",
+        client_id="c1",
+        first_name="Иван",
+        middle_name="Иванович",
+        display_name="Иванов Иван Иванович",
+    )
+    assert hr_core.employee_greeting_label(s) == "Иван Иванович"
+
+
+def test_employee_greeting_label_from_full_name() -> None:
+    s = hr_core.EmployeeSnapshot(
+        id="e1",
+        client_id="c1",
+        display_name="Петрова Мария Сергеевна",
+    )
+    assert hr_core.employee_greeting_label(s) == "Мария Сергеевна"
+
+
 def test_employee_display_label_priority() -> None:
     assert hr_core.employee_display_label(None) is None
     s = hr_core.EmployeeSnapshot(id="e1", client_id="c1", display_name="  Иван  ", email="a@b.c")

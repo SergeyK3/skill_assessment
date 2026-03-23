@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from skill_assessment.domain.entities import AssessmentSessionStatus, EvidenceKind, ProficiencyLevel, SessionPhase
@@ -22,6 +22,7 @@ from skill_assessment.schemas.api import (
     AssessmentSessionOut,
     CaseTextOut,
     ManagerRatingsBulk,
+    SessionCancelBody,
     SessionCreate,
     SessionPhaseUpdate,
     SkillAssessmentResultOut,
@@ -43,6 +44,11 @@ def _session_out(row: AssessmentSessionRow) -> AssessmentSessionOut:
         completed_at=row.completed_at,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        docs_survey_pd_consent_status=getattr(row, "docs_survey_pd_consent_status", None),
+        docs_survey_pd_consent_at=getattr(row, "docs_survey_pd_consent_at", None),
+        docs_survey_scheduled_at=getattr(row, "docs_survey_scheduled_at", None),
+        docs_survey_readiness_answer=getattr(row, "docs_survey_readiness_answer", None),
+        docs_survey_reminder_30m_sent_at=getattr(row, "docs_survey_reminder_30m_sent_at", None),
     )
 
 
@@ -91,12 +97,60 @@ def get_session(db: Session, session_id: str) -> AssessmentSessionOut:
     return _session_out(row)
 
 
-def list_sessions(db: Session, client_id: str | None, limit: int = 50) -> list[AssessmentSessionOut]:
-    q = select(AssessmentSessionRow).order_by(AssessmentSessionRow.created_at.desc()).limit(limit)
+def list_sessions(
+    db: Session,
+    *,
+    client_id: str | None = None,
+    employee_id: str | None = None,
+    phase: str | None = None,
+    status: str | None = None,
+    created_from: datetime | None = None,
+    created_to: datetime | None = None,
+    pd_consent_status: str | None = None,
+    q: str | None = None,
+    offset: int = 0,
+    limit: int = 50,
+) -> tuple[list[AssessmentSessionOut], int]:
+    """Фильтры + пагинация; ``pd_consent_status=__empty__`` — только без статуса согласия."""
+    conditions: list = []
     if client_id:
-        q = q.where(AssessmentSessionRow.client_id == client_id)
-    rows = db.scalars(q).all()
-    return [_session_out(r) for r in rows]
+        cid = client_id.strip()
+        conditions.append(AssessmentSessionRow.client_id == cid)
+    if employee_id:
+        eid = employee_id.strip()
+        # Ядро и SQLite могут хранить UUID в разном регистре — сравниваем без учёта регистра.
+        conditions.append(func.lower(AssessmentSessionRow.employee_id) == func.lower(eid))
+    if phase:
+        conditions.append(AssessmentSessionRow.phase == phase)
+    if status:
+        conditions.append(AssessmentSessionRow.status == status)
+    if created_from is not None:
+        conditions.append(AssessmentSessionRow.created_at >= created_from)
+    if created_to is not None:
+        conditions.append(AssessmentSessionRow.created_at <= created_to)
+    if pd_consent_status:
+        if pd_consent_status == "__empty__":
+            conditions.append(AssessmentSessionRow.docs_survey_pd_consent_status.is_(None))
+        else:
+            conditions.append(AssessmentSessionRow.docs_survey_pd_consent_status == pd_consent_status)
+    if q and q.strip():
+        qq = f"%{q.strip()}%"
+        conditions.append(
+            or_(
+                AssessmentSessionRow.client_id.ilike(qq),
+                AssessmentSessionRow.id.ilike(qq),
+                AssessmentSessionRow.employee_id.ilike(qq),
+            )
+        )
+
+    count_stmt = select(func.count()).select_from(AssessmentSessionRow)
+    list_stmt = select(AssessmentSessionRow).order_by(AssessmentSessionRow.created_at.desc())
+    if conditions:
+        count_stmt = count_stmt.where(and_(*conditions))
+        list_stmt = list_stmt.where(and_(*conditions))
+    total = int(db.scalar(count_stmt) or 0)
+    rows = db.scalars(list_stmt.offset(offset).limit(limit)).all()
+    return [_session_out(r) for r in rows], total
 
 
 def start_session(db: Session, session_id: str) -> AssessmentSessionOut:
@@ -106,8 +160,23 @@ def start_session(db: Session, session_id: str) -> AssessmentSessionOut:
     if row.status != AssessmentSessionStatus.DRAFT.value:
         raise HTTPException(status_code=400, detail="session_not_draft")
     row.status = AssessmentSessionStatus.IN_PROGRESS.value
-    row.phase = SessionPhase.PART2.value
+    row.phase = SessionPhase.PART1.value
     row.started_at = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+    return _session_out(row)
+
+
+def cancel_session(db: Session, session_id: str, _body: SessionCancelBody | None = None) -> AssessmentSessionOut:
+    """Отмена назначения: снимает «застрявшую» сессию, чтобы можно было создать новую."""
+    row = db.get(AssessmentSessionRow, session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="session_not_found")
+    if row.status == AssessmentSessionStatus.COMPLETED.value:
+        raise HTTPException(status_code=400, detail="session_already_completed")
+    if row.status == AssessmentSessionStatus.CANCELLED.value:
+        raise HTTPException(status_code=400, detail="session_already_cancelled")
+    row.status = AssessmentSessionStatus.CANCELLED.value
     db.commit()
     db.refresh(row)
     return _session_out(row)
@@ -117,6 +186,8 @@ def complete_session(db: Session, session_id: str) -> AssessmentSessionOut:
     row = db.get(AssessmentSessionRow, session_id)
     if row is None:
         raise HTTPException(status_code=404, detail="session_not_found")
+    if row.status == AssessmentSessionStatus.CANCELLED.value:
+        raise HTTPException(status_code=400, detail="session_cancelled")
     row.status = AssessmentSessionStatus.COMPLETED.value
     row.phase = SessionPhase.COMPLETED.value
     row.completed_at = datetime.utcnow()
@@ -139,6 +210,8 @@ def get_case_stub(db: Session, session_id: str, skill_id: str) -> CaseTextOut:
     session = db.get(AssessmentSessionRow, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session_not_found")
+    if session.status == AssessmentSessionStatus.CANCELLED.value:
+        raise HTTPException(status_code=400, detail="session_cancelled")
     skill = db.get(SkillRow, skill_id)
     if skill is None:
         raise HTTPException(status_code=404, detail="skill_not_found")
@@ -169,6 +242,8 @@ def save_manager_ratings(db: Session, session_id: str, body: ManagerRatingsBulk)
     session_row = db.get(AssessmentSessionRow, session_id)
     if session_row is None:
         raise HTTPException(status_code=404, detail="session_not_found")
+    if session_row.status == AssessmentSessionStatus.CANCELLED.value:
+        raise HTTPException(status_code=400, detail="session_cancelled")
     mgr_note = "Оценка руководителя (Part 3)"
     touched: list[SkillAssessmentResultRow] = []
     for item in body.ratings:
@@ -209,6 +284,8 @@ def add_result(db: Session, session_id: str, body: SkillResultCreate) -> SkillAs
     session = db.get(AssessmentSessionRow, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session_not_found")
+    if session.status == AssessmentSessionStatus.CANCELLED.value:
+        raise HTTPException(status_code=400, detail="session_cancelled")
     skill = db.get(SkillRow, body.skill_id)
     if skill is None:
         raise HTTPException(status_code=404, detail="skill_not_found")

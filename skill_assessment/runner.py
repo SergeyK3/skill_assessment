@@ -22,8 +22,12 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
+import secrets
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 from starlette.requests import Request
@@ -34,9 +38,36 @@ from app.db import SessionLocal
 from app.main import app
 
 from skill_assessment.router import router as skill_assessment_router
+from skill_assessment.services.examination_seed import ensure_examination_questions
 from skill_assessment.services.taxonomy_seed import ensure_demo_taxonomy
 
 _log = logging.getLogger("skill_assessment")
+
+# .env из корня пакета (рядом с pyproject.toml), даже если cwd = typical_infrastructure
+_PKG_ROOT = Path(__file__).resolve().parent.parent
+_ENV_FILE = _PKG_ROOT / ".env"
+# override=True: значения из .env перекрывают пустые/старые переменные окружения ОС
+load_dotenv(_ENV_FILE, override=True)
+
+
+def _install_httpx_telegram_token_redaction() -> None:
+    """Не писать Bot API токен в логи (httpx логирует полный URL)."""
+
+    class _RedactTelegramTokenFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            try:
+                msg = record.getMessage()
+                if "api.telegram.org/bot" in msg:
+                    record.msg = re.sub(r"/bot[0-9]+:[A-Za-z0-9_-]+/", "/bot<redacted>/", msg)
+                    record.args = ()
+            except Exception:
+                pass
+            return True
+
+    logging.getLogger("httpx").addFilter(_RedactTelegramTokenFilter())
+
+
+_install_httpx_telegram_token_redaction()
 
 
 def _ensure_sa_session_phase_column(engine) -> None:
@@ -57,6 +88,143 @@ def _ensure_sa_session_phase_column(engine) -> None:
             )
         )
     _log.info("skill_assessment: added column sa_assessment_sessions.phase (migration)")
+
+
+def _ensure_docs_survey_notify_chat_column(engine) -> None:
+    """SQLite: chat_id получателя первого уведомления Part1 (inline-календарь)."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        cols = [c["name"] for c in insp.get_columns("sa_assessment_sessions")]
+    except Exception:
+        return
+    if "docs_survey_notify_chat_id" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE sa_assessment_sessions ADD COLUMN docs_survey_notify_chat_id VARCHAR(32)")
+        )
+    _log.info("skill_assessment: added column sa_assessment_sessions.docs_survey_notify_chat_id (migration)")
+
+
+def _ensure_docs_survey_pd_consent_columns(engine) -> None:
+    """SQLite: слот опроса и статус согласия на ПДн (Part1, Telegram)."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        cols = [c["name"] for c in insp.get_columns("sa_assessment_sessions")]
+    except Exception:
+        return
+    with engine.begin() as conn:
+        if "docs_survey_scheduled_at" not in cols:
+            conn.execute(text("ALTER TABLE sa_assessment_sessions ADD COLUMN docs_survey_scheduled_at DATETIME"))
+        if "docs_survey_pd_consent_status" not in cols:
+            conn.execute(
+                text("ALTER TABLE sa_assessment_sessions ADD COLUMN docs_survey_pd_consent_status VARCHAR(16)")
+            )
+        if "docs_survey_pd_consent_at" not in cols:
+            conn.execute(text("ALTER TABLE sa_assessment_sessions ADD COLUMN docs_survey_pd_consent_at DATETIME"))
+    _log.info("skill_assessment: ensured docs_survey PD consent columns (migration)")
+
+
+def _ensure_docs_survey_consent_prompt_hr_columns(engine) -> None:
+    """SQLite: время первого запроса согласия и факт уведомления HR (таймаут 10 мин)."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        cols = [c["name"] for c in insp.get_columns("sa_assessment_sessions")]
+    except Exception:
+        return
+    with engine.begin() as conn:
+        if "docs_survey_consent_prompt_sent_at" not in cols:
+            conn.execute(
+                text("ALTER TABLE sa_assessment_sessions ADD COLUMN docs_survey_consent_prompt_sent_at DATETIME")
+            )
+        if "docs_survey_hr_notified_no_consent_at" not in cols:
+            conn.execute(
+                text("ALTER TABLE sa_assessment_sessions ADD COLUMN docs_survey_hr_notified_no_consent_at DATETIME")
+            )
+    _log.info("skill_assessment: ensured docs_survey consent prompt / HR notify columns (migration)")
+
+
+def _ensure_docs_survey_reminder_readiness_columns(engine) -> None:
+    """SQLite: напоминание за 30 мин и ответ «готов/не готов»."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        cols = [c["name"] for c in insp.get_columns("sa_assessment_sessions")]
+    except Exception:
+        return
+    with engine.begin() as conn:
+        if "docs_survey_reminder_30m_sent_at" not in cols:
+            conn.execute(
+                text("ALTER TABLE sa_assessment_sessions ADD COLUMN docs_survey_reminder_30m_sent_at DATETIME")
+            )
+        if "docs_survey_readiness_answer" not in cols:
+            conn.execute(
+                text("ALTER TABLE sa_assessment_sessions ADD COLUMN docs_survey_readiness_answer VARCHAR(16)")
+            )
+        if "docs_survey_exam_gate_awaiting" not in cols:
+            conn.execute(
+                text(
+                    "ALTER TABLE sa_assessment_sessions ADD COLUMN docs_survey_exam_gate_awaiting "
+                    "BOOLEAN NOT NULL DEFAULT 0"
+                )
+            )
+    _log.info("skill_assessment: ensured docs_survey reminder / readiness columns (migration)")
+
+
+def _ensure_examination_access_token_column(engine) -> None:
+    """SQLite: колонка access_token для персональных ссылок на экзамен (без Alembic)."""
+    from sqlalchemy import inspect, or_, select, text
+
+    from skill_assessment.infrastructure.db_models import ExaminationSessionRow
+
+    try:
+        insp = inspect(engine)
+        cols = [c["name"] for c in insp.get_columns("sa_examination_sessions")]
+    except Exception:
+        return
+    if "access_token" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE sa_examination_sessions ADD COLUMN access_token VARCHAR(128)"))
+        _log.info("skill_assessment: added column sa_examination_sessions.access_token (migration)")
+
+    db = SessionLocal()
+    try:
+        rows = db.scalars(
+            select(ExaminationSessionRow).where(
+                or_(
+                    ExaminationSessionRow.access_token.is_(None),
+                    ExaminationSessionRow.access_token == "",
+                )
+            )
+        ).all()
+        for r in rows:
+            r.access_token = secrets.token_urlsafe(32)
+        if rows:
+            db.commit()
+            _log.info(
+                "skill_assessment: backfilled access_token for %d examination session(s)",
+                len(rows),
+            )
+    finally:
+        db.close()
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_sa_examination_sessions_access_token "
+                    "ON sa_examination_sessions (access_token)"
+                )
+            )
+    except Exception:
+        pass
 
 
 app.include_router(skill_assessment_router, prefix="/api")
@@ -87,8 +255,11 @@ async def _skill_assessment_short_urls(request: Request, call_next):
 
 
 @app.on_event("startup")
-def _skill_assessment_startup() -> None:
+async def _skill_assessment_startup() -> None:
     """Гарантируем таблицы skill_assessment и демо-таксономию при пустых таблицах."""
+    # Повторно подхватить .env после сохранения файла (uvicorn --reload)
+    load_dotenv(_ENV_FILE, override=True)
+
     _log.info(
         "skill_assessment runner: плагин активен — GET /skill-assessment → /api/skill-assessment/landing, "
         "рабочий UI: GET /api/skill-assessment/workspace (GET /ui → 307 на workspace), health: GET /api/skill-assessment/health"
@@ -102,12 +273,59 @@ def _skill_assessment_startup() -> None:
 
     Base.metadata.create_all(bind=engine)
     _ensure_sa_session_phase_column(engine)
+    _ensure_docs_survey_notify_chat_column(engine)
+    _ensure_docs_survey_pd_consent_columns(engine)
+    _ensure_docs_survey_consent_prompt_hr_columns(engine)
+    _ensure_docs_survey_reminder_readiness_columns(engine)
+    _ensure_examination_access_token_column(engine)
     db = SessionLocal()
     try:
         ensure_demo_taxonomy(db)
+        ensure_examination_questions(db)
         db.commit()
     finally:
         db.close()
+
+    try:
+        from skill_assessment.services.docs_survey_consent_timeout import start_consent_timeout_background_task
+
+        start_consent_timeout_background_task()
+        _log.info("skill_assessment: фоновая проверка таймаута согласия ПДн (10 мин) запущена.")
+    except Exception:
+        _log.exception("skill_assessment: не удалось запустить проверку таймаута согласия ПДн")
+
+    raw_poll = os.getenv("TELEGRAM_ENABLE_POLLING", "")
+    poll = raw_poll.strip().lower() in ("1", "true", "yes")
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    raw_embed = os.getenv("TELEGRAM_POLLING_RUN_IN_UVICORN", "1")
+    run_poll_in_uvicorn = raw_embed.strip().lower() in ("1", "true", "yes")
+    _log.info(
+        "skill_assessment: .env=%s TELEGRAM_ENABLE_POLLING=%r → polling=%s, token_set=%s, "
+        "TELEGRAM_POLLING_RUN_IN_UVICORN=%r → embedded=%s",
+        _ENV_FILE,
+        raw_poll,
+        poll,
+        bool(token),
+        raw_embed,
+        run_poll_in_uvicorn,
+    )
+    if poll and token and run_poll_in_uvicorn:
+        from skill_assessment.integration.telegram_poller import start_background_polling
+        import skill_assessment.telegram_runtime as tg_rt
+
+        start_background_polling(token)
+        tg_rt.polling_started = True
+        _log.info(
+            "skill_assessment: Telegram long polling внутри uvicorn — отправьте /start боту в Telegram."
+        )
+    elif poll and token and not run_poll_in_uvicorn:
+        _log.info(
+            "skill_assessment: long polling в uvicorn отключён (TELEGRAM_POLLING_RUN_IN_UVICORN=0). "
+            "Запустите бота отдельно из каталога ядра: "
+            "python -m skill_assessment.telegram_worker"
+        )
+    elif poll and not token:
+        _log.warning("skill_assessment: TELEGRAM_ENABLE_POLLING=1, но TELEGRAM_BOT_TOKEN пуст — polling не запущен.")
 
 
 @app.get("/skill-assessment", include_in_schema=False)

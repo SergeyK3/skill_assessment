@@ -39,8 +39,10 @@ def test_taxonomy_sessions_results_flow() -> None:
 
         r = client.post(f"/api/skill-assessment/sessions/{session_id}/start")
         assert r.status_code == 200
-        assert r.json()["status"] == "in_progress"
-        assert r.json()["phase"] == "part2"
+        started = r.json()
+        assert started["status"] == "in_progress"
+        assert started["phase"] == "part1"
+        assert "docs_survey_telegram" in started
 
         r = client.post(
             f"/api/skill-assessment/sessions/{session_id}/part1/turns",
@@ -111,6 +113,92 @@ def test_taxonomy_sessions_results_flow() -> None:
         assert r.status_code == 200
         assert "Отчёт" in r.text
         assert "Конверсия" in r.text
+
+
+def test_sessions_list_filters_pagination_and_part1_fields() -> None:
+    """GET /sessions: items+total, фильтры, поля Part 1 в ответе."""
+    from skill_assessment.runner import app
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/skill-assessment/sessions",
+            json={"client_id": "hist_client", "employee_id": "emp_hist_1"},
+        )
+        assert r.status_code == 200
+        sid = r.json()["id"]
+
+        r = client.get(
+            "/api/skill-assessment/sessions",
+            params={"client_id": "hist_client", "limit": 20, "offset": 0},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert "items" in data and "total" in data
+        assert isinstance(data["items"], list)
+        assert data["total"] >= 1
+        assert any(x.get("id") == sid for x in data["items"])
+        row = next(x for x in data["items"] if x["id"] == sid)
+        assert "docs_survey_pd_consent_status" in row
+        assert "docs_survey_pd_consent_at" in row
+        assert "docs_survey_scheduled_at" in row
+        assert "docs_survey_readiness_answer" in row
+
+        r = client.get(
+            "/api/skill-assessment/sessions",
+            params={
+                "client_id": "hist_client",
+                "employee_id": "emp_hist_1",
+                "phase": "draft",
+                "limit": 5,
+            },
+        )
+        assert r.status_code == 200
+        assert r.json()["total"] >= 1
+
+
+def test_sessions_list_employee_id_case_insensitive() -> None:
+    """Фильтр employee_id совпадает с БД без учёта регистра UUID."""
+    from skill_assessment.runner import app
+
+    eid_lower = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/skill-assessment/sessions",
+            json={"client_id": "c_case_eid", "employee_id": eid_lower},
+        )
+        assert r.status_code == 200
+        r = client.get(
+            "/api/skill-assessment/sessions",
+            params={
+                "client_id": "c_case_eid",
+                "employee_id": eid_lower.upper(),
+                "limit": 20,
+            },
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["total"] >= 1
+        assert any(x.get("employee_id", "").lower() == eid_lower for x in data["items"])
+
+
+def test_session_cancel() -> None:
+    """Отмена незавершённого назначения; повторная отмена — 400."""
+    from skill_assessment.runner import app
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/skill-assessment/sessions",
+            json={"client_id": "c_cancel", "employee_id": "e_cancel"},
+        )
+        assert r.status_code == 200
+        sid = r.json()["id"]
+
+        r = client.post(f"/api/skill-assessment/sessions/{sid}/cancel", json={})
+        assert r.status_code == 200
+        assert r.json()["status"] == "cancelled"
+
+        r = client.post(f"/api/skill-assessment/sessions/{sid}/cancel", json={})
+        assert r.status_code == 400
 
 
 def test_classifier_import_and_report() -> None:

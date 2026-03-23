@@ -31,8 +31,44 @@ class AssessmentSessionOut(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    #: Part1 / Telegram: согласие на ПДн и слот опроса по документам (если колонки есть в БД).
+    docs_survey_pd_consent_status: str | None = None
+    docs_survey_pd_consent_at: datetime | None = None
+    docs_survey_scheduled_at: datetime | None = None
+    docs_survey_readiness_answer: str | None = None
+    docs_survey_reminder_30m_sent_at: datetime | None = None
 
     model_config = {"from_attributes": False}
+
+
+class AssessmentSessionListOut(BaseModel):
+    """Список сессий с пагинацией (GET /sessions)."""
+
+    items: list[AssessmentSessionOut]
+    total: int
+
+
+class DocsSurveyTelegramOut(BaseModel):
+    """Результат отправки уведомления об опросе по документам (POST /sessions/{id}/start)."""
+
+    sent: bool = False
+    chat_id: str | None = None
+    skipped_reason: str | None = Field(
+        default=None,
+        description="no_bot_token | session_not_found | no_chat_id | ошибка Telegram API",
+    )
+
+
+class AssessmentSessionStartOut(AssessmentSessionOut):
+    """Ответ старта сессии: состояние + попытка уведомить сотрудника в Telegram."""
+
+    docs_survey_telegram: DocsSurveyTelegramOut = Field(default_factory=DocsSurveyTelegramOut)
+
+
+class SessionCancelBody(BaseModel):
+    """Отмена назначения на оценку (HR): черновик или незавершённая сессия."""
+
+    reason: str | None = Field(default=None, max_length=500, description="Необязательная причина (пока не сохраняется в БД)")
 
 
 class SessionPhaseUpdate(BaseModel):
