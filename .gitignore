@@ -13,3 +13,8 @@ build/
 
 *.db
 
+# Секреты (токен Telegram и т.д.) — не коммитить
+.env
+.env.*
+!.env.example
+
