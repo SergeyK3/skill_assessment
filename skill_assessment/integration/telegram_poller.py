@@ -4,17 +4,22 @@ Long polling для Bot API (удобно в разработке без HTTPS w
 
 Включение: TELEGRAM_ENABLE_POLLING=1 и TELEGRAM_BOT_TOKEN в .env (корень пакета skill_assessment).
 Сообщения: сначала согласие на ПДн для опроса по документам (Part1), если ожидается ответ;
-далее сценарий экзамена по регламентам (привязка chat_id: POST …/examination/telegram/bindings
-или TELEGRAM_DEV_* в .env).
+далее сценарий экзамена по регламентам (чат узнаётся по привязке POST …/bindings, по TELEGRAM_DEV_* в .env
+или автоматически по тому же chat_id, что в сессии опроса по документам).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any
 
 import httpx
+from fastapi import HTTPException
+
+from skill_assessment.services import stt_service as stt_svc
+from skill_assessment.services.llm_post_stt_blacklist import assert_user_text_allowed_after_stt
 
 _log = logging.getLogger("skill_assessment.telegram")
 
@@ -73,7 +78,9 @@ def _run_docs_survey_pd_consent_turn(
         db.close()
 
 
-def _run_examination_turn(chat_id: int, text: str | None, is_start_command: bool) -> list[str]:
+def _run_examination_turn(
+    chat_id: int, text: str | None, is_start_command: bool
+) -> list[str]:
     from app.db import SessionLocal
 
     from skill_assessment.services.telegram_examination import handle_telegram_message
@@ -83,6 +90,53 @@ def _run_examination_turn(chat_id: int, text: str | None, is_start_command: bool
         return handle_telegram_message(db, str(chat_id), text, is_start_command)
     finally:
         db.close()
+
+
+def _stt_blacklist_reject_message() -> str:
+    return (
+        "Текст после распознавания речи не прошёл автоматическую проверку. "
+        "Сформулируйте ответ иначе или введите его с клавиатуры."
+    )
+
+
+def _check_text_after_stt_allowed(text: str) -> str | None:
+    """None — можно отправлять в сценарий; иначе текст ответа пользователю."""
+    from app.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        assert_user_text_allowed_after_stt(db, text)
+        return None
+    except HTTPException as e:
+        if e.status_code == 422:
+            return _stt_blacklist_reject_message()
+        raise
+    finally:
+        db.close()
+
+
+async def _download_and_transcribe_telegram_voice(
+    client: httpx.AsyncClient, token: str, file_id: str
+) -> str:
+    """Скачивает voice/audio из Telegram и возвращает транскрипт (STT)."""
+    r = await client.get(f"{_api_base(token)}/getFile", params={"file_id": file_id})
+    data = r.json()
+    if not data.get("ok"):
+        raise RuntimeError(f"getFile: {data}")
+    fp = (data.get("result") or {}).get("file_path") or ""
+    if not fp:
+        raise RuntimeError("getFile: no file_path")
+    url = f"https://api.telegram.org/file/bot{token}/{fp}"
+    r2 = await client.get(url)
+    r2.raise_for_status()
+    raw = r2.content
+    fname = Path(fp).name or "voice.oga"
+    return await asyncio.to_thread(
+        stt_svc.transcribe_audio_bytes,
+        raw,
+        filename=fname,
+        content_type=None,
+    )
 
 
 async def _delete_webhook(client: httpx.AsyncClient, token: str) -> None:
@@ -110,7 +164,12 @@ async def _send_message(
 
 
 async def _answer_callback_query(
-    client: httpx.AsyncClient, token: str, query_id: str, text: str | None = None
+    client: httpx.AsyncClient,
+    token: str,
+    query_id: str,
+    text: str | None = None,
+    *,
+    show_alert: bool = False,
 ) -> bool:
     """
     Подтверждение callback. Telegram ждёт ответ быстро; иначе «query is too old».
@@ -119,6 +178,8 @@ async def _answer_callback_query(
     payload: dict[str, Any] = {"callback_query_id": query_id}
     if text:
         payload["text"] = text[:200]
+    if show_alert:
+        payload["show_alert"] = True
     r = await client.post(f"{_api_base(token)}/answerCallbackQuery", json=payload)
     data = r.json()
     if not data.get("ok"):
@@ -182,62 +243,91 @@ async def _dispatch_callback_query(client: httpx.AsyncClient, token: str, cq: di
     chat_id = str(cid_int)
 
     if data.startswith("dsr|"):
-        await _answer_callback_query(client, token, str(qid), None)
         try:
             result = await asyncio.to_thread(_run_readiness_callback_turn, chat_id, data, str(qid))
         except Exception:
             _log.exception("telegram: обработка dsr| callback не удалась")
+            await _answer_callback_query(client, token, str(qid), "Ошибка сервера, попробуйте позже.", show_alert=True)
             await _send_message(client, token, int(cid), "Ошибка сервера, попробуйте позже.")
             return
         if result is None:
+            await _answer_callback_query(client, token, str(qid), None)
             return
-        for text, markup in result.outgoing:
-            if text:
-                await _send_message(client, token, int(cid), text, reply_markup=markup)
+        has_out = any((t or "").strip() for t, _ in result.outgoing)
+        if has_out:
+            await _answer_callback_query(client, token, str(qid), None)
+            for text, markup in result.outgoing:
+                if text:
+                    await _send_message(client, token, int(cid), text, reply_markup=markup)
+        else:
+            tip = (result.popup_text or "").strip() or "Готово."
+            await _answer_callback_query(client, token, str(qid), tip, show_alert=True)
         return
     if data.startswith("dsp|"):
-        # Сначала снять «часики» у Telegram; иначе истекает срок ответа на callback.
-        await _answer_callback_query(client, token, str(qid), None)
         try:
             result = await asyncio.to_thread(_run_pd_consent_callback_turn, chat_id, data, str(qid))
         except Exception:
             _log.exception("telegram: обработка dsp| callback не удалась")
+            await _answer_callback_query(client, token, str(qid), "Ошибка сервера, попробуйте позже.", show_alert=True)
             await _send_message(client, token, int(cid), "Ошибка сервера, попробуйте позже.")
             return
         if result is None:
+            await _answer_callback_query(client, token, str(qid), None)
             return
-        for text, markup in result.outgoing:
-            if text:
-                await _send_message(client, token, int(cid), text, reply_markup=markup)
+        has_out = any((t or "").strip() for t, _ in result.outgoing)
+        if has_out:
+            await _answer_callback_query(client, token, str(qid), None)
+            for text, markup in result.outgoing:
+                if text:
+                    await _send_message(client, token, int(cid), text, reply_markup=markup)
+        else:
+            # Раньше ответ был только в popup_text; без sendMessage пользователь не видел реакции.
+            tip = (result.popup_text or "").strip() or "Готово."
+            await _answer_callback_query(client, token, str(qid), tip, show_alert=True)
         return
     if not data.startswith(("dsd|", "dst|")):
         return
-    await _answer_callback_query(client, token, str(qid), None)
     try:
         result = await asyncio.to_thread(_run_docs_survey_callback_turn, chat_id, data, str(qid))
     except Exception:
         _log.exception("telegram: обработка dsd/dst callback не удалась")
+        await _answer_callback_query(client, token, str(qid), "Ошибка сервера, попробуйте ещё раз.", show_alert=True)
         await _send_message(client, token, int(cid), "Ошибка сервера, попробуйте ещё раз.")
         return
     if result is None:
+        await _answer_callback_query(client, token, str(qid), None)
         return
-    for text, markup in result.outgoing:
-        if text:
-            await _send_message(client, token, int(cid), text, reply_markup=markup)
+    has_out = any((t or "").strip() for t, _ in result.outgoing)
+    if has_out:
+        await _answer_callback_query(client, token, str(qid), None)
+        for text, markup in result.outgoing:
+            if text:
+                await _send_message(client, token, int(cid), text, reply_markup=markup)
+    else:
+        tip = (result.popup_text or "").strip() or "Готово."
+        await _answer_callback_query(client, token, str(qid), tip, show_alert=True)
 
 
-def _extract_text_and_chat(update: dict[str, Any]) -> tuple[int | None, str | None]:
+def _extract_incoming_message(update: dict[str, Any]) -> tuple[int | None, str, str | None]:
+    """chat_id, подпись/текст, file_id голосового или аудио (если есть) — для STT."""
     msg = update.get("message") or update.get("edited_message")
     if not msg or not isinstance(msg, dict):
-        return None, None
+        return None, "", None
     chat = msg.get("chat")
     if not chat:
-        return None, None
+        return None, "", None
     cid = chat.get("id")
     if cid is None:
-        return None, None
-    text = msg.get("text") or msg.get("caption") or ""
-    return int(cid), str(text).strip()
+        return None, "", None
+    text = str(msg.get("text") or msg.get("caption") or "").strip()
+    voice = msg.get("voice")
+    audio = msg.get("audio")
+    file_id: str | None = None
+    if isinstance(voice, dict) and voice.get("file_id"):
+        file_id = str(voice["file_id"])
+    elif isinstance(audio, dict) and audio.get("file_id"):
+        file_id = str(audio["file_id"])
+    return int(cid), text, file_id
 
 
 async def run_long_polling(token: str) -> None:
@@ -276,9 +366,60 @@ async def run_long_polling(token: str) -> None:
                     if isinstance(cq, dict):
                         await _dispatch_callback_query(client, token, cq)
                         continue
-                    chat_id, text = _extract_text_and_chat(upd)
+                    chat_id, text, voice_file_id = _extract_incoming_message(upd)
                     if chat_id is None:
                         continue
+                    if voice_file_id:
+                        try:
+                            transcribed = await _download_and_transcribe_telegram_voice(
+                                client, token, voice_file_id
+                            )
+                            transcribed = (transcribed or "").strip()
+                            if not transcribed:
+                                await _send_message(
+                                    client,
+                                    token,
+                                    chat_id,
+                                    "Речь не распознана. Повторите голосовое сообщение или отправьте ответ текстом.",
+                                )
+                                continue
+                            bl = await asyncio.to_thread(_check_text_after_stt_allowed, transcribed)
+                            if bl:
+                                await _send_message(client, token, chat_id, bl)
+                                continue
+                            if text:
+                                text = f"{text}\n{transcribed}".strip()
+                            else:
+                                text = transcribed
+                        except stt_svc.SttConfigurationError:
+                            await _send_message(
+                                client,
+                                token,
+                                chat_id,
+                                "Распознавание речи не настроено на сервере "
+                                "(переменные SKILL_ASSESSMENT_STT_PROVIDER / ключ OpenAI). "
+                                "Ответьте текстом или попросите администратора включить STT.",
+                            )
+                            continue
+                        except ValueError as exc:
+                            code = str(exc)
+                            if "empty_audio" in code:
+                                msg = "Пустое аудио. Запишите голосовое сообщение ещё раз."
+                            elif "audio_too_large" in code:
+                                msg = "Файл слишком большой. Запишите более короткое сообщение или ответьте текстом."
+                            else:
+                                msg = "Не удалось обработать аудио. Ответьте текстом."
+                            await _send_message(client, token, chat_id, msg)
+                            continue
+                        except Exception:
+                            _log.exception("telegram: STT voice message failed")
+                            await _send_message(
+                                client,
+                                token,
+                                chat_id,
+                                "Не удалось распознать голос. Повторите запись или отправьте ответ текстом.",
+                            )
+                            continue
                     parts = text.strip().split() if text else []
                     first_cmd = parts[0] if parts else ""
                     is_start = first_cmd == "/start" or first_cmd.startswith("/start@")
