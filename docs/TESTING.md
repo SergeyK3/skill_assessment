@@ -19,17 +19,17 @@
 
 ### 1. Автотесты (без Telegram и без вторых устройств)
 
-- **Юнит-тесты**: доменная логика (сессия, вопросы, протокол, баллы, расчёт процента, когда он появится в коде). Внешние эмбеддинги при необходимости подменяются фиксированными векторами или заглушками, чтобы не тянуть тяжёлые модели в каждый прогон.
+- **Юнит-тесты домена**: модуль `skill_assessment.domain.examination_scoring` — косинус по векторам, процент, шкала 0–3, средний процент по сессии; `FixedVectorEmbedder` подставляет фиксированные векторы вместо модели (см. `tests/test_domain_examination_scoring.py`).
 - **Интеграция с API**: `TestClient` против приложения (см. [README](README.md)); контекст `with TestClient(app) as c:` — чтобы отработал startup и создались таблицы.
-- **Каналы (веб / Telegram)**: в коде выносить отправку сообщений и приём событий в **адаптеры**; в CI и в большинстве тестов использовать **заглушки** (лог, in-memory, mock), без сети и без реального Bot API.
+- **Каналы (веб / Telegram)**: исходящие сообщения Part1 идут через **`skill_assessment.adapters.telegram_outbound`**. В pytest по умолчанию **`SKILL_ASSESSMENT_TELEGRAM_OUTBOUND=mock`** (см. `tests/conftest.py`): заглушка пишет «отправки» в память, без реального Bot API.
 
-Пример запуска существующих тестов из venv ядра с установленным `skill_assessment[dev]`:
+Пример запуска из venv ядра с установленным `skill_assessment[dev]` (путь к репозиторию подставьте свой):
 
 ```powershell
+pytest D:\path\to\repo\skill_assessment\tests\test_domain_examination_scoring.py -q
+pytest D:\path\to\repo\skill_assessment\tests\test_telegram_outbound_integration.py -q
 pytest D:\path\to\repo\skill_assessment\tests\test_assessment_flow.py -q
 ```
-
-Путь подставьте к вашему клону репозитория, где лежит `skill_assessment`.
 
 ### 2. Локальный и staging-прогон (веб)
 

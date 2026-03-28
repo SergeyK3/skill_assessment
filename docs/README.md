@@ -28,6 +28,8 @@ pip install -e D:\path\to\skill_assessment
 |------------|------------|
 | `TELEGRAM_BOT_TOKEN` | Токен от @BotFather (dev-бот отдельно от прода). |
 | `TELEGRAM_ENABLE_POLLING` | `1` — при старте uvicorn запускается **long polling**; бот отвечает на `/start` (удобно в разработке). В тестах и CI не включать. |
+| `SKILL_ASSESSMENT_PUBLIC_BASE_URL` | Внешний базовый URL сервиса. Из него собираются персональные ссылки из Telegram, включая страницу оценки руководителя. |
+| `SKILL_ASSESSMENT_MANAGER_REVIEW_DEADLINE_HOURS` | Через сколько часов после завершения кейсов ставить дедлайн руководителю на `Part 3`. По умолчанию `72`. |
 
 При старте `runner` подхватывает **`.env`** из корня пакета (даже если текущий каталог — ядро `typical_infrastructure`).
 
