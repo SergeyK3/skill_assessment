@@ -7,16 +7,20 @@ ORM-модели skill assessment на общем Base ядра (один SQLite
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from skill_assessment.bootstrap import ensure_typical_infrastructure_on_path
+
+ensure_typical_infrastructure_on_path()
 
 from app.db import Base
 
 
 def utcnow() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(timezone.utc)
 
 
 class TimestampMixin:
@@ -72,6 +76,16 @@ class AssessmentSessionRow(Base, TimestampMixin):
     docs_survey_readiness_answer: Mapped[str | None] = mapped_column(String(16), nullable=True)
     #: Ожидаем текстовый ответ на «время пришло, готовы к вопросам по регламентам?» (перед экзаменом).
     docs_survey_exam_gate_awaiting: Mapped[bool] = mapped_column(default=False, nullable=False)
+    #: JSON: чек-лист «опрос по служебным документам» (Part 1).
+    part1_docs_checklist_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Токен для личной страницы чек-листа (сотрудник без входа в HR).
+    part1_docs_access_token: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True, index=True)
+    #: JSON: набор кейсов Part 2, ответы сотрудника и результат оценки ИИ.
+    part2_cases_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Токен персональной страницы оценки руководителя (Part 3).
+    manager_access_token: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True, index=True)
+    #: Когда руководителю уже отправили ссылку на оценку в Telegram.
+    manager_assessment_notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     results: Mapped[list[SkillAssessmentResultRow]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
@@ -95,6 +109,20 @@ class SessionPart1TurnRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     session: Mapped[AssessmentSessionRow] = relationship(back_populates="part1_turns")
+
+
+class LlmPostSttBlacklistRow(Base, TimestampMixin):
+    """Чёрный список: если транскрипт после STT совпадает — дальнейший вызов LLM (оценка и т.д.) не выполняется."""
+
+    __tablename__ = "sa_llm_post_stt_blacklist"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    #: Подстрока (без учёта регистра) или выражение при ``match_mode=regex``.
+    pattern: Mapped[str] = mapped_column(Text, nullable=False)
+    #: ``substring`` | ``regex``
+    match_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="substring", index=True)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class SkillAssessmentResultRow(Base, TimestampMixin):
@@ -141,6 +169,9 @@ class ExaminationSessionRow(Base, TimestampMixin):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # Непредсказуемый токен для веба (персональная ссылка без входа в портал); выдаётся при создании.
     access_token: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True, index=True)
+    #: Если задано — вопросы берутся из ``sa_examination_questions`` с ``scenario_id == question_scenario_id``
+    #: (обычно совпадает с id сессии при подборе из ядра по KPI/должности).
+    question_scenario_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     answers: Mapped[list["ExaminationAnswerRow"]] = relationship(
         back_populates="session", cascade="all, delete-orphan", order_by="ExaminationAnswerRow.created_at"
@@ -172,3 +203,152 @@ class ExaminationAnswerRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     session: Mapped[ExaminationSessionRow] = relationship(back_populates="answers")
+
+
+class CompetencyCatalogVersionRow(Base, TimestampMixin):
+    """Версия матрицы компетенций (набор связей должность + подразделение + навыки)."""
+
+    __tablename__ = "sa_competency_catalog_versions"
+    __table_args__ = (UniqueConstraint("version_code", name="uq_sa_ccv_version_code"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    #: Мультитенантность (nullable = общая матрица по умолчанию).
+    client_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    version_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    #: draft | active | archived
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active", index=True)
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    matrix_rows: Mapped[list["CompetencyMatrixRow"]] = relationship(
+        back_populates="catalog_version", cascade="all, delete-orphan"
+    )
+
+
+class CompetencySkillDefinitionRow(Base, TimestampMixin):
+    """Справочник формулировок навыков (глобальный каталог для матрицы)."""
+
+    __tablename__ = "sa_competency_skill_definitions"
+    __table_args__ = (UniqueConstraint("skill_code", name="uq_sa_csd_skill_code"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    client_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    #: Короткий устойчивый код (например хеш от названия).
+    skill_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    title_ru: Mapped[str] = mapped_column(String(512), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+
+    matrix_rows: Mapped[list["CompetencyMatrixRow"]] = relationship(back_populates="skill_definition")
+
+
+class CompetencyMatrixRow(Base, TimestampMixin):
+    """
+    Связь: версия × должность × тип подразделения (функция) × навык.
+    «Домен» для строки матрицы задаётся парой position_code + department_code.
+    """
+
+    __tablename__ = "sa_competency_matrix"
+    __table_args__ = (
+        UniqueConstraint(
+            "version_id",
+            "position_code",
+            "department_code",
+            "skill_rank",
+            name="uq_sa_cm_version_pos_dept_rank",
+        ),
+        Index("ix_sa_cm_version_pos_dept", "version_id", "position_code", "department_code"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    version_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("sa_competency_catalog_versions.id"), nullable=False, index=True
+    )
+    #: Код должности из глобального каталога (position_catalog.position_code).
+    position_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    #: Код функции / типа подразделения (как function_code в position_catalog: ACC, HR, SALES, …).
+    department_code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    skill_definition_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("sa_competency_skill_definitions.id"), nullable=False, index=True
+    )
+    #: Порядок навыка в рамках (версия, должность, подразделение): 1, 2, 3, …
+    skill_rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+
+    catalog_version: Mapped[CompetencyCatalogVersionRow] = relationship(back_populates="matrix_rows")
+    skill_definition: Mapped[CompetencySkillDefinitionRow] = relationship(back_populates="matrix_rows")
+
+
+class KpiCatalogVersionRow(Base, TimestampMixin):
+    """Версия каталога KPI (матрица по должности и подразделению с приоритетами)."""
+
+    __tablename__ = "sa_kpi_catalog_versions"
+    __table_args__ = (UniqueConstraint("version_code", name="uq_sa_kcv_version_code"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    client_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    version_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active", index=True)
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    matrix_rows: Mapped[list["KpiMatrixRow"]] = relationship(
+        back_populates="catalog_version", cascade="all, delete-orphan"
+    )
+
+
+class KpiDefinitionRow(Base, TimestampMixin):
+    """Справочник KPI (код и параметры показателя)."""
+
+    __tablename__ = "sa_kpi_definitions"
+    __table_args__ = (UniqueConstraint("kpi_code", name="uq_sa_kd_kpi_code"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    client_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    kpi_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    title_ru: Mapped[str] = mapped_column(String(512), nullable=False)
+    unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    period_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    default_target: Mapped[float | None] = mapped_column(Float, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+
+    matrix_rows: Mapped[list["KpiMatrixRow"]] = relationship(back_populates="kpi_definition")
+
+
+class KpiMatrixRow(Base, TimestampMixin):
+    """
+    Связь: версия × должность × подразделение (функция) × KPI.
+    ``kpi_rank`` = приоритет: 1 — наиболее важный, далее по убыванию.
+    """
+
+    __tablename__ = "sa_kpi_matrix"
+    __table_args__ = (
+        UniqueConstraint(
+            "version_id",
+            "position_code",
+            "department_code",
+            "kpi_rank",
+            name="uq_sa_km_version_pos_dept_rank",
+        ),
+        Index("ix_sa_km_version_pos_dept", "version_id", "position_code", "department_code"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    version_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("sa_kpi_catalog_versions.id"), nullable=False, index=True
+    )
+    position_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    department_code: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    kpi_definition_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("sa_kpi_definitions.id"), nullable=False, index=True
+    )
+    kpi_rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+
+    catalog_version: Mapped[KpiCatalogVersionRow] = relationship(back_populates="matrix_rows")
+    kpi_definition: Mapped[KpiDefinitionRow] = relationship(back_populates="matrix_rows")

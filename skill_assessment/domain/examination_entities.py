@@ -38,6 +38,8 @@ class ExaminationPhase(str, Enum):
     PROTOCOL = "protocol"  # просмотр/выдача протокола (PDF — позже)
     COMPLETED = "completed"
     BLOCKED_CONSENT = "blocked_consent"  # отказ от согласия — до действия HR
+    BLOCKED_NO_REGULATION = "blocked_no_regulation"  # нет регламента/KPI для вопросов — до действия HR
+    INTERRUPTED_TIMEOUT = "interrupted_timeout"  # превышен лимит между ответами — уведомить HR и назначить заново
 
 
 class ConsentStatus(str, Enum):
