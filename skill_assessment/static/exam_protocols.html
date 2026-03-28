@@ -1,0 +1,199 @@
+<!-- route: GET /api/skill-assessment/ui/exam-protocols | file: skill_assessment/static/exam_protocols.html -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Протоколы экзаменов по регламентам</title>
+  <link rel="stylesheet" href="/static/shared/layout.css">
+  <style>
+    .wrap { max-width: min(1200px, 98vw); margin: 0 auto; padding: 2rem 1.25rem; box-sizing: border-box; }
+    h1 { font-size: 1.2rem; margin-top: 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin-top: 0.75rem; }
+    th, td { border-bottom: 1px solid var(--border); padding: 0.5rem 0.45rem; text-align: left; vertical-align: top; }
+    th { color: var(--text-muted); font-weight: 500; font-size: 0.8rem; }
+    .meta { font-size: 0.85rem; color: var(--text-muted); }
+    a { color: var(--accent); }
+    button.del { font-size: 0.78rem; padding: 0.25rem 0.5rem; color: var(--error, #b91c1c); border: 1px solid rgba(185,28,28,0.45); background: rgba(185,28,28,0.06); cursor: pointer; border-radius: 6px; }
+    button.del:hover { background: rgba(185,28,28,0.12); }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <div class="sidebar-brand">Оценка навыков</div>
+        <a id="linkBackPart3" class="sidebar-item" href="#">← Рабочая сессия</a>
+        <a href="/skill-assessment" class="sidebar-item">← Вход skill assessment</a>
+        <div class="sidebar-section-label">Протоколы</div>
+        <a href="/docs" class="sidebar-item api-link">API</a>
+      </div>
+    </aside>
+    <main class="main">
+      <div class="content wrap">
+        <h1>Экзамены по внутренним регламентам</h1>
+        <p class="meta">Организация: <code id="clientIdDisplay">—</code><span id="employeeFilterHint" hidden> · сотрудник: <code id="employeeIdDisplay"></code></span>. Здесь видны завершённые и прерванные сессии экзамена по Telegram. Для завершённых можно открыть протокол в новой вкладке или скачать HTML. Откройте эту страницу с тем же <code>client_id</code>, что в URL рабочей сессии (пример: <code>/api/skill-assessment/workspace?client_id=…</code> или из ядра «Приложения»).</p>
+        <p id="err" class="meta err" hidden></p>
+        <div style="overflow-x:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Дата экзамена</th>
+                <th>Дата оценки</th>
+                <th>ФИО</th>
+                <th>Должность</th>
+                <th>Подразделение</th>
+                <th>Ср. балл (1–4)</th>
+                <th>Ср. % (50–100)</th>
+                <th>Статус</th>
+                <th>Сессия</th>
+                <th>Просмотр</th>
+                <th>Скачать</th>
+                <th>Удалить</th>
+              </tr>
+            </thead>
+            <tbody id="tbody">
+              <tr><td colspan="12" class="meta">Загрузка…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script>
+    const API = '/api/skill-assessment';
+    const clientId = (function() {
+      const c = new URLSearchParams(window.location.search).get('client_id');
+      return c && c.trim() ? c.trim() : 'demo_client';
+    })();
+    const employeeIdFilter = (function() {
+      const e = new URLSearchParams(window.location.search).get('employee_id');
+      return e && e.trim() ? e.trim() : '';
+    })();
+    document.getElementById('clientIdDisplay').textContent = clientId;
+    const back = document.getElementById('linkBackPart3');
+    if (back) back.href = '/api/skill-assessment/workspace?client_id=' + encodeURIComponent(clientId);
+
+    function escapeHtml(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function examStatusLabel(s) {
+      const status = String((s && s.status) || '');
+      const phase = String((s && s.phase) || '');
+      if (phase === 'interrupted_timeout') return 'Прерван: таймаут между ответами';
+      if (phase === 'blocked_no_regulation') return 'Приостановлен: нет регламента/KPI';
+      if (phase === 'blocked_consent') return 'Заблокирован: отказ от согласия';
+      if (phase === 'completed' || status === 'completed') return 'Завершён';
+      if (phase === 'protocol') return 'Протокол готов';
+      if (phase === 'questions') return 'Идёт экзамен';
+      if (phase === 'intro') return 'Вступление';
+      if (phase === 'consent') return 'Ожидает согласие';
+      if (status === 'cancelled') return 'Отменён';
+      if (status === 'in_progress') return 'В работе';
+      if (status === 'scheduled') return 'Назначен';
+      return phase || status || '—';
+    }
+
+    let displayTz = 'Europe/Moscow';
+    function fmtLocalIso(iso) {
+      if (!iso) return '—';
+      try {
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return String(iso);
+        return new Intl.DateTimeFormat('ru-RU', {
+          dateStyle: 'short',
+          timeStyle: 'short',
+          timeZone: displayTz,
+        }).format(d) + ' (' + displayTz + ')';
+      } catch (e) {
+        return String(iso);
+      }
+    }
+
+    async function load() {
+      const err = document.getElementById('err');
+      const tbody = document.getElementById('tbody');
+      err.hidden = true;
+      try {
+        const cr = await fetch(API + '/display-config');
+        if (cr.ok) {
+          const jc = await cr.json();
+          if (jc && jc.local_timezone) displayTz = jc.local_timezone;
+        }
+      } catch (e) { /* fallback Europe/Moscow */ }
+      if (employeeIdFilter) {
+        const eh = document.getElementById('employeeFilterHint');
+        const ed = document.getElementById('employeeIdDisplay');
+        if (eh) eh.hidden = false;
+        if (ed) ed.textContent = employeeIdFilter;
+      }
+      try {
+        let url = API + '/examination/sessions?client_id=' + encodeURIComponent(clientId) + '&limit=200&enrich=1';
+        if (employeeIdFilter) url += '&employee_id=' + encodeURIComponent(employeeIdFilter);
+        const r = await fetch(url);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const rows = await r.json();
+        if (!rows.length) {
+          const hint = employeeIdFilter
+            ? 'Нет экзаменов для этого сотрудника. Уберите фильтр сотрудника из URL или откройте страницу без <code>employee_id</code>.'
+            : 'Нет экзаменов для этой организации.';
+          tbody.innerHTML = '<tr><td colspan="12" class="meta">' + hint + '</td></tr>';
+          return;
+        }
+        tbody.innerHTML = rows.map(function(s) {
+          const view = API + '/examination/sessions/' + encodeURIComponent(s.id) + '/protocol/html';
+          const dl = view + '?download=1';
+          const done = fmtLocalIso(s.completed_at);
+          const evald = fmtLocalIso(s.evaluated_at || s.completed_at);
+          const sid = s.id ? s.id.substring(0, 8) + '…' : '—';
+          const fio = s.employee_display_name ? s.employee_display_name : ('id: ' + (s.employee_id || ''));
+          const pos = s.employee_position_label || '—';
+          const dep = s.employee_department_label || '—';
+          const avg = s.average_score_4 != null ? String(s.average_score_4) : '—';
+          const pct = s.average_score_percent != null ? String(s.average_score_percent) : '—';
+          const statusLabel = examStatusLabel(s);
+          const isCompleted = String(s.status || '') === 'completed' || String(s.phase || '') === 'completed' || String(s.phase || '') === 'protocol';
+          return '<tr>' +
+            '<td>' + escapeHtml(done) + '</td>' +
+            '<td>' + escapeHtml(evald) + '</td>' +
+            '<td>' + escapeHtml(fio) + '</td>' +
+            '<td>' + escapeHtml(pos) + '</td>' +
+            '<td>' + escapeHtml(dep) + '</td>' +
+            '<td>' + escapeHtml(avg) + '</td>' +
+            '<td>' + escapeHtml(pct) + '</td>' +
+            '<td>' + escapeHtml(statusLabel) + '</td>' +
+            '<td><code title="' + escapeHtml(s.id) + '">' + escapeHtml(sid) + '</code></td>' +
+            '<td>' + (isCompleted ? '<a href="' + view + '" target="_blank" rel="noopener">Открыть</a>' : '<span class="meta">—</span>') + '</td>' +
+            '<td>' + (isCompleted ? '<a href="' + dl + '">Скачать .html</a>' : '<span class="meta">—</span>') + '</td>' +
+            '<td><button type="button" class="del" data-sid="' + escapeHtml(s.id) + '">Удалить</button></td>' +
+            '</tr>';
+        }).join('');
+      } catch (e) {
+        err.textContent = String(e.message || e);
+        err.hidden = false;
+        tbody.innerHTML = '<tr><td colspan="12" class="meta">Не удалось загрузить список.</td></tr>';
+      }
+    }
+    document.getElementById('tbody').addEventListener('click', function(ev) {
+      const btn = ev.target && ev.target.closest && ev.target.closest('button.del');
+      if (!btn) return;
+      const sid = btn.getAttribute('data-sid');
+      if (!sid) return;
+      if (!confirm('Удалить протокол и сессию экзамена из базы? Действие необратимо.')) return;
+      btn.disabled = true;
+      fetch(API + '/examination/sessions/' + encodeURIComponent(sid), { method: 'DELETE' })
+        .then(function(r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return load();
+        })
+        .catch(function(e) {
+          alert(String(e.message || e));
+          btn.disabled = false;
+        });
+    });
+    load();
+  </script>
+</body>
+</html>

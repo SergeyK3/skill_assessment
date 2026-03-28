@@ -23,6 +23,7 @@
     pre.log { font-size: 0.8rem; white-space: pre-wrap; max-height: 12rem; overflow: auto; padding: 0.5rem; background: var(--bg); border-radius: 6px; border: 1px solid var(--border); }
     .sidebar-section-label { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0.75rem 0 0.35rem 0; }
     .prep-banner { font-size: 0.85rem; line-height: 1.45; padding: 0.65rem 0.75rem; background: rgba(124,58,237,0.08); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.75rem; }
+    button.recording { background: rgba(220,38,38,0.2); border-color: #dc2626; color: #fecaca; }
   </style>
 </head>
 <body>
@@ -44,7 +45,7 @@
       <div class="content wrap">
         <h1 style="margin-top:0;font-size:1.25rem;">Part 1 — устное интервью (текст)</h1>
         <p id="prepHint" class="prep-banner" hidden>Для привязки сессии к организации откройте страницу из ядра с <code>client_id</code> (<a href="/clients">организации</a> или <strong>/client/…</strong> → Приложения).</p>
-        <p class="meta">Без аудио: имитация цепочки LLM → пользователь (как после STT). Реплики сохраняются в сессии и попадают в отчёт.</p>
+        <p class="meta">Текст вручную или запись с микрофона: STT на сервере → реплика <code>user</code> в сессии и в отчёте. Без ключа OpenAI используется mock STT (строка-заглушка).</p>
 
         <div class="block">
           <h2>Сессия</h2>
@@ -52,6 +53,16 @@
             <button type="button" class="primary" id="btnCreate">Создать сессию и старт</button>
             <span id="sessionInfo" class="meta"></span>
           </div>
+        </div>
+
+        <div class="block">
+          <h2>Голосовой ответ (STT)</h2>
+          <p class="meta" style="margin-top:0;">Разрешите доступ к микрофону. Запись в формате WebM, распознавание на сервере.</p>
+          <div class="row-actions">
+            <button type="button" class="primary" id="btnRecord" disabled>Записать ответ</button>
+            <span id="recordStatus" class="meta"></span>
+          </div>
+          <p id="audioOut" class="meta"></p>
         </div>
 
         <div class="block">
@@ -116,8 +127,76 @@
       await fetch(API + '/sessions/' + sessionId + '/start', { method: 'POST' });
       document.getElementById('sessionInfo').innerHTML = 'Сессия: <code>' + sessionId + '</code>';
       document.getElementById('btnAdd').disabled = false;
+      document.getElementById('btnRecord').disabled = false;
       await refreshLog();
     };
+
+    (function setupRecorder() {
+      const btn = document.getElementById('btnRecord');
+      const st = document.getElementById('recordStatus');
+      const out = document.getElementById('audioOut');
+      if (!window.MediaRecorder) {
+        if (btn) btn.disabled = true;
+        if (st) st.textContent = 'MediaRecorder не поддерживается в этом браузере.';
+        return;
+      }
+      let mediaRecorder = null;
+      let chunks = [];
+      let stream = null;
+
+      btn.onclick = async () => {
+        out.textContent = '';
+        if (!sessionId) return;
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+          mediaRecorder.stop();
+          return;
+        }
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (e) {
+          out.innerHTML = '<span class="err">Микрофон:</span> ' + (e && e.message ? e.message : String(e));
+          return;
+        }
+        chunks = [];
+        const mime = window.MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : (window.MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '');
+        mediaRecorder = mime
+          ? new MediaRecorder(stream, { mimeType: mime })
+          : new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = function(ev) { if (ev.data && ev.data.size) chunks.push(ev.data); };
+        mediaRecorder.onstop = async function() {
+          if (stream) {
+            stream.getTracks().forEach(function(t) { t.stop(); });
+            stream = null;
+          }
+          btn.classList.remove('recording');
+          btn.textContent = 'Записать ответ';
+          st.textContent = '';
+          const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+          chunks = [];
+          const fd = new FormData();
+          fd.append('file', blob, 'part1_answer.webm');
+          try {
+            const r = await fetch(API + '/sessions/' + sessionId + '/part1/audio', { method: 'POST', body: fd });
+            const j = await r.json();
+            if (r.ok) {
+              out.innerHTML = '<span class="ok">STT сохранено</span>, seq=' + j[0].seq + ' · ' + (j[0].text || '').slice(0, 120);
+              await refreshLog();
+            } else {
+              out.innerHTML = '<span class="err">Ошибка</span> ' + JSON.stringify(j);
+            }
+          } catch (e) {
+            out.innerHTML = '<span class="err">Сеть:</span> ' + (e && e.message ? e.message : String(e));
+          }
+          mediaRecorder = null;
+        };
+        mediaRecorder.start();
+        btn.classList.add('recording');
+        btn.textContent = 'Остановить и отправить';
+        st.textContent = 'Идёт запись…';
+      };
+    })();
 
     document.getElementById('btnAdd').onclick = async () => {
       const out = document.getElementById('addOut');

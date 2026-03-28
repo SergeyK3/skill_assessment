@@ -47,6 +47,7 @@
         <a id="navEmployees" href="/clients" class="sidebar-item" hidden>Сотрудники</a>
         <a id="navRegs" href="/clients" class="sidebar-item" hidden>Регламенты и KPI</a>
         <div class="sidebar-section-label" style="margin-top:0.75rem;">Плагин</div>
+        <a id="linkExamProtocols" href="/api/skill-assessment/ui/exam-protocols" class="sidebar-item">Протоколы экзаменов (кадры)</a>
         <a href="/docs" class="sidebar-item api-link">API (Swagger)</a>
       </div>
     </aside>
@@ -98,7 +99,7 @@
     }
     function saApplyClientContext() {
       const q = saQuerySuffix();
-      ['linkMainUi', 'linkSelfUi', 'linkFuture', 'linkFutureApi', 'linkPart3', 'linkPart1'].forEach(id => {
+      ['linkMainUi', 'linkSelfUi', 'linkFuture', 'linkFutureApi', 'linkPart3', 'linkPart1', 'linkExamProtocols'].forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
         const base = el.getAttribute('href').split('?')[0];

@@ -1,0 +1,181 @@
+<!-- route: GET /api/skill-assessment/ui/manager-assessment | file: skill_assessment/static/manager_assessment.html -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Оценка руководителем</title>
+  <link rel="stylesheet" href="/static/shared/layout.css">
+  <style>
+    .wrap { max-width: 58rem; margin: 0 auto; padding: 1.5rem; box-sizing: border-box; }
+    .block { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.25rem; margin-top: 1rem; }
+    h1 { font-size: 1.25rem; margin: 0 0 0.5rem 0; color: var(--accent); }
+    h2 { font-size: 1rem; margin: 0 0 0.5rem 0; color: var(--accent); }
+    .meta { font-size: 0.88rem; color: var(--text-muted); margin: 0.35rem 0; }
+    .ok { color: var(--success); }
+    .err { color: var(--error); }
+    table { width: 100%; border-collapse: collapse; margin-top: 0.75rem; }
+    th, td { border-bottom: 1px solid var(--border); padding: 0.6rem 0.5rem; text-align: left; vertical-align: top; }
+    th { color: var(--text-muted); font-weight: 600; font-size: 0.85rem; }
+    select { min-width: 12rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: inherit; padding: 0.4rem 0.5rem; }
+    textarea.manager-comment { width: 100%; min-width: 14rem; max-width: 32rem; min-height: 3.5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: inherit; padding: 0.45rem 0.5rem; font: inherit; resize: vertical; box-sizing: border-box; }
+    button { padding: 0.5rem 0.9rem; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: inherit; cursor: pointer; }
+    button.primary { background: rgba(124,58,237,0.25); border-color: var(--accent); color: var(--accent); }
+    button[disabled], select[disabled] { opacity: 0.65; cursor: default; }
+    .row-actions { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-top: 1rem; }
+    .pill { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; border: 1px solid var(--border); font-size: 0.78rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Этап 3. Оценка руководителем</h1>
+    <p class="meta" id="pageIntro">Загрузка данных оценки…</p>
+    <p class="meta" id="submitStatus"></p>
+    <div id="mount"><p class="meta">Подготовка страницы…</p></div>
+  </div>
+  <script>
+    const API = '/api/skill-assessment/public/manager-assessment';
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+
+    function escapeHtml(value) {
+      const d = document.createElement('div');
+      d.textContent = value == null ? '' : String(value);
+      return d.innerHTML;
+    }
+
+    function optionHtml(selected, value, label) {
+      return '<option value="' + value + '"' + (String(selected) === String(value) ? ' selected' : '') + '>' +
+        escapeHtml(label) + '</option>';
+    }
+
+    function levelOptions(selected) {
+      return [
+        optionHtml(selected, 0, '0 - не демонстрирует'),
+        optionHtml(selected, 1, '1 - частично'),
+        optionHtml(selected, 2, '2 - типовая ситуация'),
+        optionHtml(selected, 3, '3 - сложная ситуация')
+      ].join('');
+    }
+
+    function levelLabel(value) {
+      if (value === 0) return '0 - не демонстрирует';
+      if (value === 1) return '1 - частично';
+      if (value === 2) return '2 - типовая ситуация';
+      if (value === 3) return '3 - сложная ситуация';
+      return '—';
+    }
+
+    function renderPage(data) {
+      const intro = document.getElementById('pageIntro');
+      const mount = document.getElementById('mount');
+      if (!mount) return;
+      if (intro) {
+        intro.innerHTML =
+          'Сотрудник: <strong>' + escapeHtml(data.employee_label || '—') + '</strong> · ' +
+          'должность: <strong>' + escapeHtml(data.employee_position_label || '—') + '</strong> · ' +
+          'этап: <span class="pill">' + escapeHtml(data.stage_title || 'оценка руководителем') + '</span>' +
+          (data.deadline_label ? ' · дедлайн: <strong>' + escapeHtml(data.deadline_label) + '</strong>' : '');
+      }
+      const rows = (data.skills || []).map(function(item) {
+        const selected = item.current_level == null ? 2 : item.current_level;
+        const isActive = item.is_active !== false;
+        const scoreCell = isActive
+          ? '<select class="level"' + (data.can_submit ? '' : ' disabled') + '>' + levelOptions(selected) + '</select>'
+          : '<span class="meta">Неактивный навык: оценка не обязательна.</span>' +
+            (item.current_level == null ? '' : '<br><span class="pill">Текущая оценка: ' + escapeHtml(levelLabel(item.current_level)) + '</span>');
+        const commentVal = item.manager_comment != null && item.manager_comment !== undefined ? String(item.manager_comment) : '';
+        const commentCell = isActive && data.can_submit
+          ? '<textarea class="manager-comment" rows="3" placeholder="Комментарий по навыку (необязательно)">' + escapeHtml(commentVal) + '</textarea>'
+          : '<span class="meta">' + (commentVal ? escapeHtml(commentVal) : '—') + '</span>';
+        return '<tr data-skill-id="' + escapeHtml(item.skill_id) + '">' +
+          '<td><strong>' + escapeHtml(item.skill_title) + '</strong><br><span class="meta"><code>' + escapeHtml(item.skill_code) + '</code></span>' +
+            (isActive ? '<br><span class="pill">Активный</span>' : '<br><span class="pill">Неактивный</span>') +
+          '</td>' +
+          '<td>' + escapeHtml(item.kpi_hint || data.kpi_summary || '—') + '</td>' +
+          '<td>' + scoreCell + '</td>' +
+          '<td>' + commentCell + '</td>' +
+          '</tr>';
+      }).join('');
+      const readonlyNote = data.can_submit
+        ? '<p class="meta">Оцените все активные навыки. Неактивные строки показаны для справки. KPI показаны рядом как дополнительный ориентир.</p>'
+        : '<p class="meta ok">Оценка уже сохранена или матрица для этой должности не настроена. Данные доступны только для просмотра.</p>';
+      const submitBlock = data.can_submit
+        ? '<div class="row-actions"><button type="button" class="primary" id="btnSubmitManager">Сохранить оценку руководителя</button></div>'
+        : '';
+      mount.innerHTML =
+        '<div class="block">' +
+          '<h2>Контекст оценки</h2>' +
+          '<p class="meta">' + escapeHtml(data.part2_summary || '—') + '</p>' +
+          '<p class="meta">' + escapeHtml(data.kpi_summary || '—') + '</p>' +
+        '</div>' +
+        '<div class="block">' +
+          '<h2>Шкала 0-3</h2>' +
+          '<p class="meta">0 - не демонстрирует, 1 - демонстрирует частично, 2 - демонстрирует правильно в типовой ситуации, 3 - демонстрирует правильно в сложной ситуации.</p>' +
+          readonlyNote +
+          '<table><thead><tr><th>Навык</th><th>KPI / ориентир</th><th>Оценка</th><th>Комментарий</th></tr></thead><tbody>' +
+            (rows || '<tr><td colspan="4">Нет навыков для оценки.</td></tr>') +
+          '</tbody></table>' +
+          submitBlock +
+        '</div>';
+      const btn = document.getElementById('btnSubmitManager');
+      if (btn) btn.onclick = function() { submitRatings(); };
+    }
+
+    async function submitRatings() {
+      const status = document.getElementById('submitStatus');
+      const ratings = [];
+      document.querySelectorAll('tr[data-skill-id]').forEach(function(tr) {
+        const sid = tr.getAttribute('data-skill-id');
+        const sel = tr.querySelector('select.level');
+        if (!sel) return;
+        const ta = tr.querySelector('textarea.manager-comment');
+        const c = ta ? String(ta.value || '').trim() : '';
+        const row = { skill_id: sid, level: parseInt(sel.value, 10) };
+        if (c) row.comment = c;
+        ratings.push(row);
+      });
+      if (status) status.textContent = 'Сохранение оценки…';
+      try {
+        const r = await fetch(API + '?token=' + encodeURIComponent(token), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ratings: ratings })
+        });
+        const j = await r.json().catch(function() { return null; });
+        if (!r.ok) {
+          const msg = (j && j.detail) ? (typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)) : ('HTTP ' + r.status);
+          if (status) status.innerHTML = '<span class="err">' + escapeHtml(msg) + '</span>';
+          return;
+        }
+        if (status) status.innerHTML = '<span class="ok">Оценка сохранена. Сессия завершена.</span>';
+        await loadPage();
+      } catch (e) {
+        if (status) status.innerHTML = '<span class="err">' + escapeHtml(e.message || String(e)) + '</span>';
+      }
+    }
+
+    async function loadPage() {
+      const mount = document.getElementById('mount');
+      if (!token || token.length < 16) {
+        if (mount) mount.innerHTML = '<p class="meta err">Нет или слишком короткий параметр <code>token</code> в адресе страницы.</p>';
+        return;
+      }
+      try {
+        const r = await fetch(API + '?token=' + encodeURIComponent(token));
+        const j = await r.json().catch(function() { return null; });
+        if (!r.ok) {
+          const msg = (j && j.detail) ? (typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)) : ('HTTP ' + r.status);
+          if (mount) mount.innerHTML = '<p class="meta err">' + escapeHtml(msg) + '</p>';
+          return;
+        }
+        renderPage(j);
+      } catch (e) {
+        if (mount) mount.innerHTML = '<p class="meta err">' + escapeHtml(e.message || String(e)) + '</p>';
+      }
+    }
+
+    loadPage();
+  </script>
+</body>
+</html>

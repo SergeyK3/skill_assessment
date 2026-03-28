@@ -7,8 +7,8 @@
   <title>Оценка навыков — сессия</title>
   <link rel="stylesheet" href="/static/shared/layout.css">
   <style>
-    /* Шире основной колонки, чтобы таблица с фильтрами и кнопкой «Выбрать» не сжималась */
-    .wrap { max-width: min(1280px, 100%); padding: 2rem; box-sizing: border-box; }
+    /* Широкая колонка контента — на больших экранах таблица истории и «Действия» видны без лишней прокрутки */
+    .wrap { max-width: min(1760px, 98vw); padding: 2rem 1.5rem; box-sizing: border-box; }
     .block { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.25rem; margin-top: 1rem; }
     .block h2 { font-size: 1rem; margin: 0 0 0.75rem 0; color: var(--accent); }
     .block h2 .step-num { opacity: 0.75; font-weight: 600; margin-right: 0.35rem; }
@@ -20,6 +20,7 @@
     td.num { text-align: center; }
     tr.row-selected { background: rgba(124,58,237,0.12); }
     select.level { min-width: 8rem; padding: 0.35rem 0.5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: inherit; }
+    textarea.manager-comment { width: 100%; min-width: 12rem; max-width: 28rem; min-height: 3.2rem; padding: 0.35rem 0.5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: inherit; font: inherit; resize: vertical; box-sizing: border-box; }
     .row-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.75rem; }
     button { padding: 0.45rem 0.85rem; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: inherit; cursor: pointer; font-size: 0.88rem; }
     button.primary { background: rgba(124,58,237,0.25); border-color: var(--accent); color: var(--accent); }
@@ -62,15 +63,97 @@
       position: relative;
       z-index: 1;
     }
+    /* История сессий: колонка действий шире и закреплена справа — «Удалить» всегда в зоне видимости */
+    .history-table-scroll {
+      overflow-x: auto;
+      overflow-y: visible;
+      -webkit-overflow-scrolling: touch;
+    }
+    table.history-table {
+      min-width: 58rem;
+      font-size: 0.8rem;
+    }
+    table.history-table th.col-actions,
+    table.history-table td.col-actions {
+      position: sticky;
+      right: 0;
+      z-index: 2;
+      min-width: 19rem;
+      width: 19rem;
+      max-width: 19rem;
+      text-align: left;
+      vertical-align: top;
+      white-space: normal;
+      line-height: 1.45;
+      box-shadow: -6px 0 14px -4px rgba(0, 0, 0, 0.12);
+      border-left: 1px solid var(--border);
+    }
+    table.history-table thead th.col-actions {
+      z-index: 3;
+      background: var(--surface);
+    }
+    table.history-table tbody td.col-actions {
+      background: var(--surface);
+    }
+    table.history-table tbody tr:hover td.col-actions {
+      background: rgba(124, 58, 237, 0.06);
+    }
     button.btn-select { white-space: nowrap; position: relative; z-index: 2; }
     .history-filters { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; align-items: flex-end; margin-bottom: 0.75rem; font-size: 0.82rem; }
     .history-filters label { display: flex; flex-direction: column; gap: 0.2rem; color: var(--text-muted); min-width: 7rem; }
     .history-filters input[type="text"], .history-filters input[type="date"], .history-filters select {
       padding: 0.35rem 0.45rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: inherit; font-size: 0.82rem;
     }
-    table.history-table { min-width: 58rem; font-size: 0.8rem; }
     table.history-table td { vertical-align: top; }
     table.history-table .td-narrow { white-space: nowrap; }
+    table.history-table .td-tg-hint { max-width: 22rem; font-size: 0.78rem; line-height: 1.4; word-break: break-word; }
+    button.hist-delete {
+      font-size: 0.78rem;
+      padding: 0.25rem 0.5rem;
+      color: var(--error, #b91c1c);
+      border-color: rgba(185, 28, 28, 0.45);
+      background: rgba(185, 28, 28, 0.06);
+    }
+    button.hist-delete:hover {
+      background: rgba(185, 28, 28, 0.12);
+      border-color: var(--error, #b91c1c);
+    }
+    button.btn-ref-see {
+      font-size: 0.78rem;
+      padding: 0.28rem 0.55rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: rgba(124, 58, 237, 0.12);
+      color: var(--accent);
+      cursor: pointer;
+      margin-right: 0.35rem;
+    }
+    button.btn-ref-see:hover {
+      border-color: var(--accent);
+      background: rgba(124, 58, 237, 0.2);
+    }
+    table.ref-eval-table { min-width: 56rem; }
+    #ref-eval-table { scroll-margin-top: 5rem; }
+    .badge-no-show {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: lowercase;
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+      background: rgba(220, 38, 38, 0.12);
+      color: var(--error, #dc2626);
+      border: 1px solid rgba(220, 38, 38, 0.35);
+    }
+    .sidebar-item.catalog-nav { cursor: pointer; }
+    .sidebar-item.catalog-nav.active {
+      background: rgba(124, 58, 237, 0.14);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    table.catalog-table { min-width: 64rem; font-size: 0.82rem; }
+    table.catalog-table th.num, table.catalog-table td.num { text-align: center; width: 4rem; }
   </style>
 </head>
 <body>
@@ -86,14 +169,28 @@
         <a id="navCoreEmp" class="sidebar-item" href="/clients" hidden>Сотрудники</a>
         <a id="navCorePos" class="sidebar-item" href="/clients" hidden>Должности</a>
         <a href="/docs" class="sidebar-item api-link">API</a>
+        <div class="sidebar-section-label">Экзамен по регламентам</div>
+        <a id="navExamProtocols" class="sidebar-item" href="/api/skill-assessment/ui/exam-protocols?client_id=demo_client">Протоколы экзаменов</a>
+        <div class="sidebar-section-label">Глобальные каталоги</div>
+        <a href="#" class="sidebar-item catalog-nav active" id="navViewSession" data-view="session">Рабочая сессия</a>
+        <a href="#" class="sidebar-item catalog-nav" id="navViewSkills" data-view="skills">Ключевые навыки</a>
+        <a href="#" class="sidebar-item catalog-nav" id="navViewKpi" data-view="kpi">KPI по должностям</a>
+        <a href="#ref-eval-table" class="sidebar-item" id="navToRefEval" title="Перейти к сводной таблице Part 1+2 на странице рабочей сессии">Сводка оценок (справочник)</a>
       </div>
     </aside>
     <main class="main">
       <div class="content wrap">
+        <div id="viewSession">
         <h1 style="margin-top:0;font-size:1.25rem;">Оценка навыков — рабочая сессия</h1>
-        <p id="prepHint" class="prep-banner" hidden>Укажите <code>client_id</code> в URL (из <a href="/clients">/clients</a> или <strong>/client/…</strong> → Приложения), чтобы загрузить сотрудников из ядра. Без него используется <code>demo_client</code> и список может быть пустым.</p>
+        <p id="prepHint" class="prep-banner" hidden>Укажите <code>client_id</code> в URL (из <a id="prepLinkClients" href="/clients">/clients</a> или <strong>/client/…</strong> → Приложения), чтобы загрузить сотрудников из ядра. Без него используется <code>demo_client</code> и список может быть пустым. Открывайте ядро с тем же хостом и портом, что и API (например <code>http://127.0.0.1:8000</code> — не <code>http://127.0.0.1</code> без порта).</p>
         <div class="prep-banner" id="nextStepsHint">
-          <strong>Оценок ещё нет — что делать:</strong> это ожидаемо в начале. В таблице нажмите <strong>Выбрать</strong> — список сократится до этого сотрудника, ниже откроется блок с кнопкой <strong>Создать сессию и старт</strong>, затем этапы 1–3. Колонки «Док. / Кейс / Рук.» и «Последняя сессия» заполнятся после прохождения. Если списка сотрудников нет — сначала добавьте их в <a id="hintWsLink" href="#">рабочем пространстве</a> организации.
+          <strong>Оценок ещё нет — что делать:</strong> это ожидаемо в начале. В таблице нажмите <strong>Выбрать</strong> — список сократится до этого сотрудника. Ниже ведётся <strong>один единый цикл оценки</strong> для этапов 1–3: система переиспользует активную сессию и создаёт новую только после завершения предыдущей. Если списка сотрудников нет — сначала добавьте их в <a id="hintWsLink" href="#">рабочем пространстве</a> организации.
+        </div>
+
+        <div class="prep-banner" id="examProtocolBanner" style="background: rgba(124,58,237,0.1); border: 1px solid rgba(124,58,237,0.4);">
+          <strong>Протокол экзамена по регламентам</strong> (сценарий в Telegram после опроса по документам):
+          <a id="linkExamProtocolsMain" href="/api/skill-assessment/ui/exam-protocols?client_id=demo_client">Открыть список протоколов</a>
+          — HTML по завершённым экзаменам. В таблице <strong>«История назначений сессий»</strong> ниже у каждой строки в колонке «Действия» также есть ссылка <strong>«Протокол экзамена»</strong> (фильтр по сотруднику).
         </div>
 
         <div class="block">
@@ -135,12 +232,46 @@
           <p class="meta"><button type="button" id="btnRefreshRoster">Обновить список</button></p>
         </div>
 
+        <div class="block" id="ref-eval-table">
+          <h2>Сводная таблица оценок навыков (справочник)</h2>
+          <p class="meta">По каждой паре <strong>сессия × навык</strong>: должность и сотрудник, итог <strong>без оценки руководителя</strong> — среднее по заполненным Part 1 (устное интервью/чек-лист) и Part 2 (кейс). Шкала уровня <strong>0–3</strong> (четыре градации) и <strong>проценты</strong> от максимума 3. Учитываются последние сессии организации (см. подпись ниже). <strong>Как сюда попасть:</strong> пункт слева <strong>«Сводка оценок (справочник)»</strong> (если открыты «Ключевые навыки» или KPI — сначала вернёт на рабочую сессию и прокрутит сюда) или якорь в адресе: <code>#ref-eval-table</code> на странице <code>/api/skill-assessment/workspace</code>.</p>
+          <p id="refEvalErr" class="meta err" hidden></p>
+          <p id="refEvalMeta" class="meta"></p>
+          <div class="history-table-scroll">
+            <table class="history-table ref-eval-table">
+              <thead>
+                <tr>
+                  <th>Должность</th>
+                  <th>Сотрудник</th>
+                  <th>Навык</th>
+                  <th class="num" title="Среднее Part 1 и Part 2, шкала 0–3">Итог 0–3</th>
+                  <th class="num" title="Тот же итог в процентах">Итог %</th>
+                  <th class="col-actions" scope="col">Действия</th>
+                </tr>
+              </thead>
+              <tbody id="refEvalBody">
+                <tr><td colspan="6" class="meta">Нажмите «Обновить таблицу».</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="meta"><button type="button" id="btnRefreshRefEval">Обновить таблицу</button></p>
+        </div>
+
         <div class="block" id="sessionHistoryBlock">
           <h2>История назначений сессий</h2>
-          <p class="meta">Сессии оценки в контексте <code id="histClientDisplay">—</code>. Узкие фильтры — после выбора сотрудника (поле «Сотрудник» подставляется автоматически).</p>
+          <p class="meta">Сессии оценки в контексте <code id="histClientDisplay">—</code>. Выберите сотрудника — список сузится к его назначениям. Фильтр <strong>«Слот опроса»</strong> — по дате/времени слота в Telegram (<code>DOCS_SURVEY_LOCAL_TIMEZONE</code>).</p>
+          <p class="meta"><strong>Смена даты/времени слота опроса по документам:</strong> в правой колонке у сессии со статусом не <code>completed</code>/<code>cancelled</code> нажмите <strong>«Изменить слот»</strong> — откроется блок «Шаг 1» ниже с полями даты, времени и кнопкой <strong>«Сохранить слот»</strong> (тот же запрос, что ручное <code>PATCH …/docs-survey-slot</code>).</p>
           <div class="history-filters">
             <label>Сотрудник
               <select id="histFilterEmployee" title="Фильтр по сотруднику"><option value="">Все</option></select>
+            </label>
+            <label>Слот опроса (док.)
+              <select id="histFilterSlot" title="По времени слота опроса по документам в Telegram">
+                <option value="">Все</option>
+                <option value="today">Сегодня (локальная дата)</option>
+                <option value="upcoming">Предстоящие (слот не в прошлом)</option>
+                <option value="has_slot">Запланированные (есть слот)</option>
+              </select>
             </label>
             <label>Период с
               <input type="date" id="histDateFrom" />
@@ -191,23 +322,33 @@
             <button type="button" id="histApply">Применить</button>
             <button type="button" id="histReset">Сбросить фильтры</button>
           </div>
+          <p class="meta" style="margin-top:0.35rem;">
+            <strong>Фильтр «Предстоящие»:</strong> остаются сессии, у которых время слота <em>в вашей рабочей зоне</em> (как в боте и в полях «Изменить слот» — см. <code>DOCS_SURVEY_LOCAL_TIMEZONE</code> в <code>.env</code>) ещё не наступило.
+            Колонка «Слот опроса» и сохранение слота показывают <strong>локальное время</strong> с подписью зоны.
+            <strong>Создано / обновлено</strong> — время записи в базе (вторая строка — последнее изменение сессии); это <em>не</em> то же самое, что время в колонке «Слот» (слот может быть 07:27, а «обновлено» — 07:21, если сохранение было раньше).
+            Если после смены слота строка пропала — в «Слот опроса» выберите <strong>Все</strong> или <strong>Запланированные (есть слот)</strong>.
+            «Период с / по» — по дате <em>создания</em> сессии, не по дате слота.
+          </p>
           <p id="historyErr" class="meta err" hidden></p>
-          <div style="overflow-x:auto;">
+          <div class="history-table-scroll">
             <table class="history-table">
               <thead>
                 <tr>
                   <th>Сотрудник</th>
                   <th>Сессия</th>
-                  <th>Фаза / статус</th>
+                  <th>Фаза</th>
+                  <th>Статус сессии</th>
                   <th>Согласие ПДн</th>
                   <th>Слот опроса (док.)</th>
+                  <th>Telegram: когда напоминание</th>
                   <th>Готовность</th>
-                  <th>Создано / обновлено</th>
+                  <th>Неявка</th>
+                  <th>Создано / обновлено <span class="meta" style="font-weight:400">(время в зоне слота)</span></th>
                   <th class="col-actions">Действия</th>
                 </tr>
               </thead>
               <tbody id="historyBody">
-                <tr><td colspan="8" class="meta">Загрузка…</td></tr>
+                <tr><td colspan="11" class="meta">Загрузка…</td></tr>
               </tbody>
             </table>
           </div>
@@ -223,52 +364,149 @@
           <div class="block">
             <h2>Выбрано</h2>
             <p class="meta">Организация: <code id="clientIdDisplay">—</code> · Сотрудник: <strong id="selectedEmpName">—</strong></p>
-            <div class="row-actions">
-              <button type="button" class="primary" id="btnCreate">Создать сессию и старт</button>
-              <span id="sessionInfo" class="meta"></span>
-            </div>
-            <p id="phaseOut" class="meta" style="margin-top:0.75rem;">—</p>
+          <div class="row-actions">
+              <button type="button" class="primary" id="btnCreate">Запустить или продолжить цикл оценки</button>
+            <span id="sessionInfo" class="meta"></span>
           </div>
+            <p id="phaseOut" class="meta" style="margin-top:0.75rem;">—</p>
+        </div>
 
           <div class="block" id="stepDocs">
             <h2><span class="step-num">1</span> Опрос по служебным документам</h2>
-            <p class="meta">После старта сессии активна эта фаза (<code>part1</code>): сотруднику отправляется уведомление в Telegram с ФИО, должностью и сроком (5 рабочих дней). Полноценный опрос по регламентам под должность (чек-лист / сценарий) — в разработке.</p>
-            <p class="meta">Если назначение ошибочное или тестовое, отмените его в блоке <strong>«История назначений сессий»</strong> (кнопка «Отменить») — статус станет <code>cancelled</code>, сотрудник не будет «застревать» в незавершённой сессии.</p>
+            <p class="meta"><strong>Слот в Telegram</strong> сотрудник выбирает в боте; HR может переопределить дату и время здесь: кнопка <strong>«Изменить»</strong> (ниже) или в таблице <strong>«История назначений сессий»</strong> — <strong>«Изменить слот»</strong>, затем <strong>«Сохранить слот»</strong>.</p>
+            <p class="meta"><strong>Что ожидать после выбора слота:</strong> не в момент слота, а примерно за <strong>N минут до него</strong> (по умолчанию <strong>5</strong>, переменная <code>DOCS_SURVEY_REMINDER_MINUTES_BEFORE</code>, максимум 120) в Telegram приходит напоминание с кнопками «готов / не готов». Если сотрудник нажимает «готов», открывается сценарий экзамена по регламентам; сам «опрос по документам» по длительности привязан к слоту. Если HR переносит слот вручную, напоминание придёт в новое окно; планировщик работает, пока запущен процесс API (uvicorn). Сразу после смены слота отдельного «приглашения» в чат может не быть — ждите окно напоминания за N минут до слота.</p>
+            <p class="meta">После старта сессии активен этап <code>part1</code>: сотруднику уходит уведомление в Telegram. Вопросы по регламенту задаются в экзамене в Telegram; формулировки и ответы фиксируются в <strong>протоколе экзамена</strong> (страница «Протоколы» / ссылка из уведомления). На этой странице отдельный чек-лист с дублирующими вопросами не показывается.</p>
+            <p class="meta">Если назначение ошибочное или тестовое, отмените его в блоке <strong>«История назначений сессий»</strong> (кнопка «Отменить») — статус станет <code>cancelled</code>, сотрудник не будет «застревать» в незавершённой сессии. Чтобы убрать строку из истории полностью (в т.ч. после завершения или отмены), используйте <strong>«Удалить»</strong> — запись удалится из базы без восстановления.</p>
             <p id="docsTelegramStatus" class="meta" hidden></p>
-            <div class="stub-box">Здесь будет опрос по утверждённым служебным документам (чек-лист / квиз). Колонка «Док.» в таблице выше отражает этот этап.</div>
-            <div class="row-actions" style="margin-top:0.75rem;">
-              <button type="button" id="btnDocsStub" disabled>Заглушка: скоро</button>
+            <p id="docsTelegramPlan" class="meta" hidden style="margin-top:0.5rem; line-height:1.45;"></p>
+            <div id="docsSlotEditWrap" class="row-actions" style="margin-top:0.75rem; flex-wrap:wrap; align-items:center;" hidden>
+              <span class="meta" id="docsSlotZoneHint">Слот опроса по документам (локальное время, зона из <code>DOCS_SURVEY_LOCAL_TIMEZONE</code>):</span>
+              <button type="button" id="btnDocsSlotToggle">Изменить</button>
+            </div>
+            <div id="docsSlotEditPanel" style="display:none; flex-wrap:wrap; margin-top:0.5rem; width:100%; padding:0.75rem; border:1px dashed var(--border); border-radius:8px; box-sizing:border-box; align-items:center; gap:0.75rem;">
+              <label class="meta">Дата <input type="date" id="docsSlotDate" autocomplete="off" /></label>
+              <label class="meta">Время <input type="time" id="docsSlotTime" step="60" autocomplete="off" /></label>
+              <button type="button" class="primary" id="btnDocsSlotSave">Сохранить слот</button>
+              <span id="docsSlotEditMsg" class="meta"></span>
+            </div>
+            <p id="docsEmployeeLink" class="meta" hidden style="margin-top:0.5rem;"></p>
+            <p id="docsChecklistStatus" class="meta" style="margin-top:0.5rem;"></p>
+            <div id="docsPhaseActions">
+              <p class="meta" id="docsPhaseHint">Для сотрудника используется одна общая сессия оценки. Запустите этап 1 или сохраните слот — при необходимости сессия создастся автоматически.</p>
+              <div class="row-actions" id="docsGotoPart2Wrap" style="margin-top:0.5rem; flex-wrap:wrap; align-items:center;" hidden>
+                <button type="button" class="primary" id="btnGotoPart2">Перейти к кейсу (этап 2)</button>
+                <span class="meta" style="margin-left:0.5rem;">Без старого чек-листа: фаза сессии оценки переключится на <code>part2</code>.</span>
+              </div>
             </div>
           </div>
 
           <div class="block" id="stepCase">
-            <h2><span class="step-num">2</span> Загрузить текст кейса</h2>
-            <p class="meta">Текст кейса по первому навыку домена (заглушка-шаблон).</p>
-            <div class="row-actions">
-              <button type="button" id="btnCase">Загрузить текст кейса</button>
-            </div>
-            <pre class="case" id="caseOut" hidden></pre>
+            <h2><span class="step-num">2</span> Кейсы и оценка ИИ</h2>
+            <p class="meta">Для сотрудника формируется набор из 2–3 кейсов, где каждый кейс может покрывать сразу несколько навыков. Задача набора кейсов — суммарно закрыть весь список навыков; при необходимости HR может дозапросить дополнительные кейсы по непокрытым навыкам.</p>
+          <div class="row-actions">
+              <button type="button" id="btnCase">Загрузить кейсы</button>
+              <button type="button" id="btnAdditionalCases">Добавить доп. кейсы по непокрытым навыкам</button>
+              <span class="meta" id="caseAdminStatus"></span>
           </div>
+            <p class="meta" id="caseLinkOut" hidden></p>
+          <pre class="case" id="caseOut" hidden></pre>
+        </div>
 
           <div class="block" id="stepSkills">
             <h2><span class="step-num">3</span> Оценка руководителем (Part 3)</h2>
-            <p class="meta">Шкала: 0 — нет, 1 — частично, 2 — типично, 3 — продвинуто</p>
-            <div id="skillsMount"><p class="meta">Сначала нажмите «Создать сессию и старт».</p></div>
-            <div class="row-actions">
-              <button type="button" class="primary" id="btnSave" disabled>Сохранить оценки руководителя</button>
-              <span id="saveOut" class="meta"></span>
-            </div>
+          <p class="meta">Шкала: 0 — нет, 1 — частично, 2 — типично, 3 — продвинуто</p>
+          <div id="skillsMount"><p class="meta">Сначала нажмите «Создать сессию и старт».</p></div>
+          <div class="row-actions">
+            <button type="button" class="primary" id="btnSave" disabled>Сохранить оценки руководителя</button>
+            <span id="saveOut" class="meta"></span>
           </div>
         </div>
+        </div>
+        </div>
+
+        <div id="viewCatalogSkills" hidden>
+          <h1 style="margin-top:0;font-size:1.25rem;">Глобальный каталог — ключевые навыки</h1>
+          <p class="meta">Матрица по версии каталога, должности (<code>position_code</code>) и подразделению/функции (<code>department_code</code>). <strong>Ранг 1</strong> — наивысший приоритет навыка в строке должности.</p>
+          <p id="catalogSkillsErr" class="meta err" hidden></p>
+          <div class="block">
+            <h2>Таблица матрицы навыков</h2>
+            <p class="meta">Данные из БД плагина (<code>GET /api/skill-assessment/catalog/competency-matrix</code>). Если таблица пуста — перезапустите API после засева каталога.</p>
+            <div style="overflow-x:auto;">
+              <table class="catalog-table">
+                <thead>
+                  <tr>
+                    <th>Версия</th>
+                    <th>Должность</th>
+                    <th>Подразделение</th>
+                    <th class="num">Ранг</th>
+                    <th>Код навыка</th>
+                    <th>Название навыка</th>
+                    <th>Активен</th>
+                  </tr>
+                </thead>
+                <tbody id="catalogSkillsBody">
+                  <tr><td colspan="7" class="meta">Загрузка…</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="meta"><button type="button" id="btnRefreshCatalogSkills">Обновить</button></p>
+          </div>
+        </div>
+
+        <div id="viewCatalogKpi" hidden>
+          <h1 style="margin-top:0;font-size:1.25rem;">Глобальный каталог — KPI</h1>
+          <p class="meta">Матрица по версии, должности и подразделению. <strong>Приоритет 1</strong> — главный KPI для роли в этой строке.</p>
+          <p id="catalogKpiErr" class="meta err" hidden></p>
+          <div class="block">
+            <h2>Таблица матрицы KPI</h2>
+            <p class="meta">Данные из БД (<code>GET /api/skill-assessment/catalog/kpi-matrix</code>).</p>
+            <div style="overflow-x:auto;">
+              <table class="catalog-table">
+                <thead>
+                  <tr>
+                    <th>Версия</th>
+                    <th>Должность</th>
+                    <th>Подразделение</th>
+                    <th class="num">Приоритет</th>
+                    <th>Код KPI</th>
+                    <th>Название</th>
+                    <th>Ед.</th>
+                    <th>Период</th>
+                    <th>Цель (по умолч.)</th>
+                    <th>Активен</th>
+                  </tr>
+                </thead>
+                <tbody id="catalogKpiBody">
+                  <tr><td colspan="10" class="meta">Загрузка…</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="meta"><button type="button" id="btnRefreshCatalogKpi">Обновить</button></p>
+          </div>
+        </div>
+
       </div>
     </main>
   </div>
   <script>
     const API = '/api/skill-assessment';
+    /** Не кэшировать JSON сессий — иначе после PATCH слота таблица «История» может показывать старый слот до жёсткого обновления страницы. */
+    const FETCH_NO_STORE = { cache: 'no-store' };
+    /** Зона слотов/опроса (как DOCS_SURVEY_LOCAL_TIMEZONE); если API не прислал поле — не полагаемся на часовой пояс браузера. */
+    const DEFAULT_DOCS_SURVEY_TZ = 'Asia/Almaty';
     const clientId = (function() {
       const c = new URLSearchParams(window.location.search).get('client_id');
       return c && c.trim() ? c.trim() : 'demo_client';
     })();
+
+    /** Страница списка протоколов экзамена; при необходимости — только по сотруднику. */
+    function examProtocolsPageUrl(employeeId) {
+      let u = '/api/skill-assessment/ui/exam-protocols?client_id=' + encodeURIComponent(clientId);
+      if (employeeId != null && String(employeeId).trim()) {
+        u += '&employee_id=' + encodeURIComponent(String(employeeId).trim());
+      }
+      return u;
+    }
 
     let selectedEmployeeId = null;
     let selectedEmployeeLabel = '';
@@ -297,12 +535,19 @@
       if (a) a.href = q && q.trim() ? '/skill-assessment?client_id=' + encodeURIComponent(q.trim()) : '/skill-assessment';
       const el = document.getElementById('clientIdDisplay');
       if (el) el.textContent = clientId;
+      const nep = document.getElementById('navExamProtocols');
+      if (nep) nep.href = examProtocolsPageUrl();
+      const mainProto = document.getElementById('linkExamProtocolsMain');
+      if (mainProto) mainProto.href = examProtocolsPageUrl();
       const hd = document.getElementById('histClientDisplay');
       if (hd) hd.textContent = clientId;
       const hint = document.getElementById('prepHint');
       if (hint && (!q || !q.trim())) hint.hidden = false;
+      const origin = window.location.origin || '';
+      const plc = document.getElementById('prepLinkClients');
+      if (plc) plc.href = origin + '/clients';
       if (q && q.trim()) {
-        const base = '/client/' + encodeURIComponent(q.trim());
+        const base = origin + '/client/' + encodeURIComponent(q.trim());
         [['navCoreWs', ''], ['navCoreEmp', '#employees'], ['navCorePos', '#positions']].forEach(([id, hash]) => {
           const n = document.getElementById(id);
           if (n) { n.href = base + hash; n.hidden = false; }
@@ -311,7 +556,7 @@
         if (hl) hl.href = base + '#employees';
       } else {
         const hl = document.getElementById('hintWsLink');
-        if (hl) hl.href = '/clients';
+        if (hl) hl.href = origin + '/clients';
       }
     })();
 
@@ -325,17 +570,68 @@
       return d.innerHTML;
     }
 
-    function fmtShort(iso) {
+    /**
+     * API отдаёт наивный UTC ISO без суффикса Z. В JS new Date('…T…:…') без Z считается *локальным*
+     * временем браузера — из‑за этого «минуты до слота» и сравнения ломаются.
+     */
+    function parseUtcMs(iso) {
+      if (iso == null || iso === '') return NaN;
+      let s0 = typeof iso === 'string' ? iso.trim() : String(iso);
+      if (!s0) return NaN;
+      // SQLite / pydantic: "2026-03-25 02:02:00" — без T; иначе JS считает это локальным временем браузера
+      s0 = s0.replace(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}(:\d{2})?(\.\d+)?)/, '$1T$2');
+      if (/[zZ]$/.test(s0) || /[+-]\d{2}:?\d{2}$/.test(s0)) {
+        const t = Date.parse(s0);
+        return isNaN(t) ? NaN : t;
+      }
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s0)) {
+        const base = s0.replace(/\.\d+$/, '');
+        const t = Date.parse(base + 'Z');
+        return isNaN(t) ? NaN : t;
+      }
+      const t = new Date(s0).getTime();
+      return isNaN(t) ? NaN : t;
+    }
+
+    /** Минуты до момента (UTC в БД); отрицательно — уже в прошлом. */
+    function minutesUntilIso(iso) {
+      if (!iso) return null;
+      try {
+        const t = parseUtcMs(iso);
+        if (isNaN(t)) return null;
+        return Math.floor((t - Date.now()) / 60000);
+      } catch (_) { return null; }
+    }
+
+    /** Дата/время в рабочей зоне (как слот в боте); tz — IANA, например Asia/Almaty. */
+    function fmtShort(iso, tzName) {
       if (!iso) return '';
       try {
-        const d = new Date(iso);
-        return isNaN(d.getTime()) ? '' : d.toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' });
+        const ms = parseUtcMs(iso);
+        if (isNaN(ms)) return '';
+        const d = new Date(ms);
+        const o = { dateStyle: 'short', timeStyle: 'short' };
+        if (tzName) o.timeZone = tzName;
+        return new Intl.DateTimeFormat('ru-RU', o).format(d);
       } catch (_) { return ''; }
     }
 
     /** Сравнение id сотрудника из API и из data-eid (строка/UUID). */
     function normId(x) {
       return x == null ? '' : String(x);
+    }
+
+    /** Завершённая/отменённая сессия или этап отчёта — не показываем длинный текст про слот и напоминания в Telegram (отчёт уже есть или сценарий закрыт). */
+    function hideDocsSurveyTelegramHints(s) {
+      if (!s) return false;
+      const st = String(s.status || '');
+      const ph = String(s.phase || '');
+      return st === 'completed' || st === 'cancelled' || ph === 'completed' || ph === 'report';
+    }
+
+    /** Напоминание «готов/не готов» шлёт сервер только при accepted (см. process_docs_survey_30m_reminders_once). */
+    function pdConsentAcceptedForReminder(s) {
+      return s && String(s.docs_survey_pd_consent_status || '') === 'accepted';
     }
 
     function orgUnitDisplay(ouId) {
@@ -421,8 +717,74 @@
         s && normId(s.employee_id).toLowerCase() === want && s.status !== 'cancelled'
       );
       if (!list.length) return null;
-      list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      list.sort((a, b) => parseUtcMs(b.created_at) - parseUtcMs(a.created_at));
       return list[0];
+    }
+
+    function latestReusableSessionForEmployee(employeeId) {
+      const s = latestSessionForEmployee(employeeId);
+      if (!s) return null;
+      return (s.status === 'draft' || s.status === 'in_progress') ? s : null;
+    }
+
+    function renderStartTelegramStatus(startTelegram) {
+      const tgEl = document.getElementById('docsTelegramStatus');
+      if (!tgEl) return;
+      if (startTelegram && startTelegram.sent) {
+        tgEl.hidden = false;
+        tgEl.innerHTML = '<span class="ok">В Telegram отправлено уведомление</span> (chat_id: <code>' + escapeHtml(String(startTelegram.chat_id || '')) + ').';
+      } else if (startTelegram && startTelegram.skipped_reason) {
+        tgEl.hidden = false;
+        tgEl.innerHTML = '<span class="meta">Telegram: не отправлено — ' + escapeHtml(String(startTelegram.skipped_reason)) + '</span>';
+      } else {
+        tgEl.hidden = true;
+        tgEl.textContent = '';
+      }
+    }
+
+    async function ensureWorkflowSession(opts) {
+      const options = opts || {};
+      const autostart = options.autostart !== false;
+      const info = options.infoEl || document.getElementById('sessionInfo');
+      if (!selectedEmployeeId) throw new Error('Сначала выберите сотрудника.');
+
+      const reusable = latestReusableSessionForEmployee(selectedEmployeeId);
+      let createdNew = false;
+      if (reusable) {
+        sessionId = reusable.id;
+      } else {
+        const r = await fetch(API + '/sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: clientId, employee_id: selectedEmployeeId })
+        });
+        const j = await r.json().catch(function() { return null; });
+        if (!r.ok || !j || !j.id) {
+          throw new Error('Ошибка создания единой сессии оценки');
+        }
+        sessionId = j.id;
+        createdNew = !reusable;
+      }
+
+      let row = await fetch(API + '/sessions/' + sessionId, FETCH_NO_STORE).then(r => r.json());
+      let startTelegram = null;
+      if (autostart && row.status === 'draft') {
+        const sr = await fetch(API + '/sessions/' + sessionId + '/start', { method: 'POST' });
+        const startJson = await sr.json().catch(function() { return {}; });
+        if (!sr.ok) {
+          const detail = startJson.detail;
+          const msg = typeof detail === 'string' ? detail : JSON.stringify(startJson);
+          throw new Error(msg || 'Не удалось запустить этап 1');
+        }
+        startTelegram = startJson.docs_survey_telegram || null;
+        row = startJson;
+      }
+
+      if (info) {
+        const action = createdNew ? 'Создан новый единый цикл оценки.' : 'Используется текущая единая сессия оценки.';
+        info.innerHTML = action + ' Сессия: <code>' + sessionId + '</code> · фаза: <strong>' + escapeHtml(String(row.phase || 'draft')) + '</strong> · статус: <strong>' + escapeHtml(String(row.status || 'draft')) + '</strong>.';
+      }
+      return { row, startTelegram, createdNew };
     }
 
     function stageMarks(sess) {
@@ -431,11 +793,12 @@
       const st = sess.status;
       if (st === 'cancelled') return empty;
       const ph = sess.phase || '';
+      const docsDone = sess.part1_docs_checklist_completed || (ph && ph !== 'draft' && ph !== 'part1');
       let d1 = '—';
-      if (ph === 'part1') {
-        d1 = '<span class="mark" title="Опрос по документам">◐</span>';
-      } else if (st !== 'draft' && ph && ph !== 'draft' && ph !== 'part1') {
+      if (docsDone) {
         d1 = '<span class="mark ok" title="Этап документов пройден">✓</span>';
+      } else if (ph === 'part1') {
+        d1 = '<span class="mark" title="Опрос по документам">◐</span>';
       }
       let d2 = '—';
       if (ph === 'part2') {
@@ -460,7 +823,8 @@
       const list = employeesForRosterTable();
       updateRosterSelectionBar();
       if (!employeesCache.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="meta">Нет сотрудников для этого клиента. Добавьте их в <a href="/client/' + encodeURIComponent(clientId) + '#employees">рабочем пространстве</a> или укажите другой <code>client_id</code>.</td></tr>';
+        const o = window.location.origin || '';
+        tbody.innerHTML = '<tr><td colspan="8" class="meta">Нет сотрудников для этого клиента. Добавьте их в <a href="' + o + '/client/' + encodeURIComponent(clientId) + '#employees">рабочем пространстве</a> или укажите другой <code>client_id</code> в URL этой страницы. Если ссылка не открывается — в адресе должен быть порт API, например <code>http://127.0.0.1:8000/client/…</code>, а не <code>http://127.0.0.1/client/…</code> без порта.</td></tr>';
         return;
       }
       if (!list.length) {
@@ -478,7 +842,7 @@
           const stHtml = ls.status === 'cancelled'
             ? '<span class="meta" title="Назначение отменено">cancelled</span>'
             : escapeHtml(String(ls.status));
-          const upd = ls.updated_at ? '<br/><span class="meta" style="font-size:0.75rem;">' + escapeHtml(fmtShort(ls.updated_at)) + '</span>' : '';
+          const upd = ls.updated_at ? '<br/><span class="meta" style="font-size:0.75rem;">' + escapeHtml(fmtShort(ls.updated_at, ls.docs_survey_local_timezone || DEFAULT_DOCS_SURVEY_TZ)) + '</span>' : '';
           sid = '<code style="font-size:0.78rem;">' + ls.id.substring(0, 8) + '…</code> · ' + stHtml + upd;
         }
         const sel = normId(selectedEmployeeId) === normId(e.id) ? ' row-selected' : '';
@@ -514,21 +878,26 @@
       }
     }
 
+    /** Понятная подпись статуса сессии (отдельно от фазы сценария и от «неявки»). */
+    function hrSessionStatusLabel(status) {
+      const m = {
+        completed: 'Завершена',
+        cancelled: 'Отменена',
+        in_progress: 'В работе',
+        draft: 'Черновик'
+      };
+      if (!status) return '—';
+      return m[status] || String(status);
+    }
+
     function renderHistoryTable(items, total, offset, pageSize) {
       const tbody = document.getElementById('historyBody');
       if (!tbody) return;
       if (!items.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="meta">Нет сессий по выбранным фильтрам. Попробуйте «Все» в поле сотрудника или расширьте период по датам; сброс: кнопка «Сбросить фильтры».</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="meta">Нет сессий по выбранным фильтрам. Попробуйте «Все» в поле сотрудника или расширьте период по датам; сброс: кнопка «Сбросить фильтры».</td></tr>';
         document.getElementById('histPrev').disabled = true;
         document.getElementById('histNext').disabled = true;
         return;
-      }
-      function fmtDt(iso) {
-        if (!iso) return '—';
-        try {
-          const d = new Date(iso);
-          return isNaN(d.getTime()) ? '—' : d.toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' });
-        } catch (_) { return '—'; }
       }
       function empName(s) {
         const eid = normId(s.employee_id).toLowerCase();
@@ -536,28 +905,90 @@
         return e ? empLabel(e) : (s.employee_id || '—');
       }
       tbody.innerHTML = items.map(s => {
+        const tzRow = s.docs_survey_local_timezone || DEFAULT_DOCS_SURVEY_TZ;
+        function fmtDt(iso) {
+          if (!iso) return '—';
+          const x = fmtShort(iso, tzRow);
+          return x || '—';
+        }
         const consent = s.docs_survey_pd_consent_status
           ? (s.docs_survey_pd_consent_status + (s.docs_survey_pd_consent_at ? ' · ' + fmtDt(s.docs_survey_pd_consent_at) : ''))
           : '—';
-        const slot = fmtDt(s.docs_survey_scheduled_at);
+        const slot = s.docs_survey_slot_local_label || fmtDt(s.docs_survey_scheduled_at);
+        let tgPlan = '—';
+        if (!hideDocsSurveyTelegramHints(s)) {
+          function fmtMin(label, m) {
+            if (m == null || m === undefined) return '';
+            if (m >= 0) return label + ' ≈ ' + m + ' мин';
+            return label + ' (время прошло, ' + m + ' мин)';
+          }
+          const pdOk = pdConsentAcceptedForReminder(s);
+          let mSlot = s.docs_survey_minutes_until_slot;
+          let mRem = s.docs_survey_minutes_until_reminder;
+          if (mSlot == null && s.docs_survey_scheduled_at) mSlot = minutesUntilIso(s.docs_survey_scheduled_at);
+          const nBefore = s.docs_survey_reminder_minutes_before != null ? s.docs_survey_reminder_minutes_before : 5;
+          if (pdOk && mRem == null && s.docs_survey_scheduled_at && !s.docs_survey_reminder_30m_sent_at) {
+            try {
+              const slotMs = parseUtcMs(s.docs_survey_scheduled_at);
+              if (!isNaN(slotMs)) {
+                const remMs = slotMs - nBefore * 60000;
+                mRem = Math.floor((remMs - Date.now()) / 60000);
+              }
+            } catch (_) {}
+          }
+          if (!pdOk) mRem = null;
+          const lineMin = [];
+          if (s.docs_survey_reminder_30m_sent_at) {
+            lineMin.push('Напоминание уже отправлено');
+          } else if (pdOk && mRem != null) {
+            lineMin.push(fmtMin('До напоминания в Telegram', mRem));
+          }
+          if (mSlot != null) {
+            lineMin.push(fmtMin('До слота опроса по документам', mSlot));
+          }
+          const minBlock = lineMin.length ? '<div style="margin-bottom:0.35rem;">' + escapeHtml(lineMin.join(' · ')) + '</div>' : '';
+          if (s.docs_survey_telegram_schedule_hint) {
+            tgPlan = minBlock + '<div class="td-tg-hint">' + escapeHtml(s.docs_survey_telegram_schedule_hint) + '</div>';
+          } else if (minBlock) {
+            tgPlan = minBlock;
+          } else if (s.docs_survey_reminder_telegram_local_label) {
+            tgPlan = escapeHtml('Ориентир: ' + s.docs_survey_reminder_telegram_local_label);
+          } else if (s.docs_survey_reminder_minutes_before != null && s.docs_survey_local_timezone) {
+            tgPlan = escapeHtml('После выбора слота в боте: напоминание за ~' + s.docs_survey_reminder_minutes_before + ' мин до времени. Зона: ' + s.docs_survey_local_timezone);
+          }
+        }
         let read = s.docs_survey_readiness_answer ? String(s.docs_survey_readiness_answer) : '—';
         if (s.docs_survey_reminder_30m_sent_at) read += (read === '—' ? '' : '; ') + 'напоминание ' + fmtDt(s.docs_survey_reminder_30m_sent_at);
+        const examCell = s.exam_status_label
+          ? escapeHtml(String(s.exam_status_label))
+          : (
+              s.hr_no_show
+                ? '<span class="badge-no-show" title="Таймаут согласия ПДн или пропущенный слот Part 1, если сотрудник не дошёл до экзамена по регламентам.">неявка</span>'
+                : '—'
+            );
         const cr = fmtDt(s.created_at);
         const up = fmtDt(s.updated_at);
         const shortId = s.id ? s.id.substring(0, 8) + '…' : '—';
-        const ws = '/api/skill-assessment/workspace?client_id=' + encodeURIComponent(clientId) + '&session_id=' + encodeURIComponent(s.id);
-        const rep = API + '/sessions/' + encodeURIComponent(s.id) + '/report/html';
-        let actions = '<a href="' + rep + '" target="_blank" rel="noopener">Отчёт</a> · <a href="' + ws + '">Workspace</a>';
+        const proto = examProtocolsPageUrl(s.employee_id);
+        const examCompleted = String(s.exam_status_label || '') === 'Завершён';
+        let actions = '<a href="' + proto + '" target="_blank" rel="noopener" title="Протоколы опросов и экзамена по этому сотруднику">Протоколы опросов</a>';
         if (s.status !== 'completed' && s.status !== 'cancelled') {
-          actions += ' · <button type="button" class="hist-cancel" data-sid="' + escapeHtml(s.id) + '">Отменить</button>';
+          if (!examCompleted) {
+            actions += ' · <button type="button" class="hist-slot-edit" data-sid="' + escapeHtml(s.id) + '">Изменить слот</button>';
+            actions += ' · <button type="button" class="hist-cancel" data-sid="' + escapeHtml(s.id) + '">Отменить</button>';
+          }
         }
+        actions += ' · <button type="button" class="hist-delete" data-sid="' + escapeHtml(s.id) + '" title="Удалить запись из базы без восстановления">Удалить</button>';
         return '<tr>' +
           '<td>' + escapeHtml(empName(s)) + '</td>' +
           '<td class="td-narrow"><code title="' + escapeHtml(s.id) + '">' + escapeHtml(shortId) + '</code></td>' +
-          '<td><code>' + escapeHtml(s.phase) + '</code> / <code>' + escapeHtml(s.status) + '</code></td>' +
+          '<td><code>' + escapeHtml(s.phase) + '</code></td>' +
+          '<td class="td-narrow">' + escapeHtml(hrSessionStatusLabel(s.status)) + '</td>' +
           '<td>' + escapeHtml(consent) + '</td>' +
           '<td>' + escapeHtml(slot) + '</td>' +
+          '<td class="td-tg-hint">' + tgPlan + '</td>' +
           '<td>' + escapeHtml(read) + '</td>' +
+          '<td class="td-narrow">' + examCell + '</td>' +
           '<td class="td-narrow">' + escapeHtml(cr) + '<br/>' + escapeHtml(up) + '</td>' +
           '<td class="col-actions">' + actions + '</td>' +
           '</tr>';
@@ -597,6 +1028,8 @@
       if (st) p.set('status', st);
       const cs = document.getElementById('histFilterConsent').value;
       if (cs) p.set('pd_consent_status', cs);
+      const slotF = document.getElementById('histFilterSlot') && document.getElementById('histFilterSlot').value;
+      if (slotF) p.set('docs_survey_slot_filter', slotF);
       const qv = document.getElementById('histFilterQ').value.trim();
       if (qv) p.set('q', qv);
       const df = document.getElementById('histDateFrom').value;
@@ -604,7 +1037,7 @@
       const dt = document.getElementById('histDateTo').value;
       if (dt) p.set('created_to', dt + 'T23:59:59');
       try {
-        const r = await fetch(API + '/sessions?' + p.toString());
+        const r = await fetch(API + '/sessions?' + p.toString(), FETCH_NO_STORE);
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const data = await r.json();
         const items = data.items || [];
@@ -616,7 +1049,7 @@
           histMeta.textContent = 'Показано ' + from + '–' + to + ' из ' + total;
         }
       } catch (e) {
-        if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="meta err">Не удалось загрузить историю.</td></tr>';
+        if (tbody) tbody.innerHTML = '<tr><td colspan="11" class="meta err">Не удалось загрузить историю.</td></tr>';
         if (errEl) { errEl.textContent = String(e.message || e); errEl.hidden = false; }
       }
     }
@@ -657,7 +1090,7 @@
         }
       } catch (_) {}
       try {
-        const r = await fetch(API + '/sessions?client_id=' + encodeURIComponent(clientId) + '&limit=500&offset=0');
+        const r = await fetch(API + '/sessions?client_id=' + encodeURIComponent(clientId) + '&limit=500&offset=0', FETCH_NO_STORE);
         if (r.ok) {
           const j = await r.json();
           sessionsCache = parseSessionsPayload(j);
@@ -678,7 +1111,114 @@
       try {
         await loadSessionHistory();
       } catch (_) {}
+      try {
+        await loadRefEvalTable();
+      } catch (_) {}
     }
+
+    async function loadRefEvalTable() {
+      const errEl = document.getElementById('refEvalErr');
+      const tbody = document.getElementById('refEvalBody');
+      const meta = document.getElementById('refEvalMeta');
+      if (errEl) {
+        errEl.hidden = true;
+        errEl.textContent = '';
+      }
+      if (!tbody) return;
+      if (!clientId) {
+        tbody.innerHTML = '<tr><td colspan="6" class="meta">Укажите client_id в URL.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = '<tr><td colspan="6" class="meta">Загрузка…</td></tr>';
+      try {
+        const p = new URLSearchParams();
+        p.set('client_id', clientId);
+        p.set('session_limit', '120');
+        p.set('session_offset', '0');
+        const r = await fetch(API + '/sessions/skill-evaluations-reference?' + p.toString(), FETCH_NO_STORE);
+        const j = await r.json().catch(function() { return null; });
+        if (!r.ok) {
+          const msg = (j && j.detail) ? (typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)) : ('HTTP ' + r.status);
+          throw new Error(msg);
+        }
+        const rows = j.rows || [];
+        if (meta) {
+          meta.textContent =
+            'Всего сессий в организации: ' + (j.total_sessions != null ? j.total_sessions : '—') +
+            ' · в таблицу развернуты последние ' + (j.session_limit != null ? j.session_limit : 120) + ' сессий (по дате обновления).';
+        }
+        if (!rows.length) {
+          tbody.innerHTML =
+            '<tr><td colspan="6" class="meta">Нет строк: для последних сессий нет навыков с заполненным Part 1 или Part 2.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = rows.map(function(row) {
+          const sid = row.session_id;
+          const lvl = row.aggregate_level_0_3 != null ? String(row.aggregate_level_0_3) : '—';
+          const pc = row.aggregate_pct_0_100 != null ? String(row.aggregate_pct_0_100) : '—';
+          return (
+            '<tr data-session-id="' + escapeHtml(sid) + '">' +
+            '<td class="td-position">' + escapeHtml(row.position_label || '—') + '</td>' +
+            '<td>' + escapeHtml(row.employee_label || row.employee_id || '—') + '</td>' +
+            '<td>' + escapeHtml(row.skill_title || '') + '<br><span class="meta"><code>' + escapeHtml(row.skill_code || '') + '</code></span></td>' +
+            '<td class="num">' + escapeHtml(lvl) + '/3</td>' +
+            '<td class="num">' + escapeHtml(pc) + '</td>' +
+            '<td class="col-actions">' +
+            '<button type="button" class="btn-ref-see" data-sid="' + escapeHtml(sid) + '">Просмотреть</button>' +
+            '<button type="button" class="hist-delete ref-eval-del" data-sid="' + escapeHtml(sid) + '" title="Удалить сессию оценки из базы">Удалить</button>' +
+            '</td></tr>'
+          );
+        }).join('');
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="6" class="meta err">Не удалось загрузить сводную таблицу.</td></tr>';
+        if (errEl) {
+          errEl.textContent = String(e.message || e);
+          errEl.hidden = false;
+        }
+      }
+    }
+
+    document.getElementById('btnRefreshRefEval').addEventListener('click', function() {
+      loadRefEvalTable();
+    });
+
+    document.getElementById('ref-eval-table').addEventListener('click', function(ev) {
+      const btnSee = ev.target.closest && ev.target.closest('button.btn-ref-see');
+      if (btnSee && this.contains(btnSee)) {
+        ev.preventDefault();
+        const sid = btnSee.getAttribute('data-sid');
+        if (sid) {
+          window.open(API + '/sessions/' + encodeURIComponent(sid) + '/report/html', '_blank', 'noopener');
+        }
+        return;
+      }
+      const btnDel = ev.target.closest && ev.target.closest('button.ref-eval-del');
+      if (!btnDel || !this.contains(btnDel)) return;
+      ev.preventDefault();
+      const sid = btnDel.getAttribute('data-sid');
+      if (!sid) return;
+      if (!confirm(
+        'Удалить сессию оценки из базы без восстановления?\n\n' +
+        'Будут удалены связанные данные по этой сессии (результаты, реплики Part1, чек-лист по документам и т.д.).'
+      )) return;
+      fetch(API + '/sessions/' + encodeURIComponent(sid), { method: 'DELETE' })
+        .then(async function(r) {
+          if (r.status === 204) return;
+          const t = await r.text();
+          throw new Error(t || ('HTTP ' + r.status));
+        })
+        .then(function() {
+          if (sessionId && normId(sessionId) === normId(sid)) {
+            sessionId = null;
+            const si = document.getElementById('sessionInfo');
+            if (si) si.textContent = '';
+          }
+          return loadRosterData();
+        })
+        .catch(function(err) {
+          alert('Не удалось удалить: ' + (err.message || err));
+        });
+    });
 
     document.getElementById('rosterBody').addEventListener('click', function(ev) {
       const btn = ev.target.closest && ev.target.closest('button.btn-select');
@@ -711,6 +1251,8 @@
       document.getElementById('histFilterPhase').value = '';
       document.getElementById('histFilterStatus').value = '';
       document.getElementById('histFilterConsent').value = '';
+      const hSlot = document.getElementById('histFilterSlot');
+      if (hSlot) hSlot.value = '';
       document.getElementById('histFilterQ').value = '';
       histPage = 0;
       histDefaultRangeApplied = true;
@@ -727,6 +1269,57 @@
     document.getElementById('histPageSize').addEventListener('change', () => { histPage = 0; loadSessionHistory(); });
 
     document.getElementById('historyBody').addEventListener('click', function(ev) {
+      const btnSlot = ev.target.closest && ev.target.closest('button.hist-slot-edit');
+      if (btnSlot && this.contains(btnSlot)) {
+        ev.preventDefault();
+        const sid = btnSlot.getAttribute('data-sid');
+        if (sid) {
+          focusSessionById(sid).then(function() {
+            const panel = document.getElementById('docsSlotEditPanel');
+            if (panel) panel.style.display = 'flex';
+            const step = document.getElementById('stepDocs');
+            if (step) step.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }).catch(function(err) {
+            alert('Не удалось открыть сессию: ' + (err.message || err));
+          });
+        }
+        return;
+      }
+      const btnDel = ev.target.closest && ev.target.closest('button.hist-delete');
+      if (btnDel && this.contains(btnDel)) {
+        ev.preventDefault();
+        const sid = btnDel.getAttribute('data-sid');
+        if (!sid) return;
+        if (!confirm(
+          'Удалить запись о сессии оценки из базы без восстановления?\n\n' +
+          'Будут удалены связанные данные по этой сессии (результаты, реплики Part1, чек-лист по документам и т.д.).'
+        )) return;
+        return fetch(API + '/sessions/' + encodeURIComponent(sid), { method: 'DELETE' })
+          .then(async (r) => {
+            if (r.status === 204) return;
+            const t = await r.text();
+            throw new Error(t || ('HTTP ' + r.status));
+          })
+          .then(() => {
+            if (sessionId && normId(sessionId) === normId(sid)) {
+              sessionId = null;
+              const si = document.getElementById('sessionInfo');
+              if (si) si.textContent = '';
+            }
+            return loadRosterData();
+          })
+          .then(() => {
+            if (sessionId && !sessionsCache.some(function(x) { return x && normId(x.id) === normId(sessionId); })) {
+              sessionId = null;
+              const si = document.getElementById('sessionInfo');
+              if (si) si.textContent = '';
+            }
+          })
+          .then(function() { return loadRefEvalTable(); })
+          .catch(function(err) {
+            alert('Не удалось удалить запись: ' + (err.message || err));
+          });
+      }
       const btn = ev.target.closest && ev.target.closest('button.hist-cancel');
       if (!btn || !this.contains(btn)) return;
       ev.preventDefault();
@@ -771,27 +1364,145 @@
       }
       const rows = skills.map(s =>
         '<tr data-skill-id="' + s.id + '"><td>' + s.title + '</td><td><code>' + s.code + '</code></td><td>' +
-        '<select class="level" aria-label="Уровень для ' + s.title.replace(/"/g, '') + '">' +
-        '<option value="0">0</option><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option>' +
-        '</select></td></tr>'
+          '<select class="level" aria-label="Уровень для ' + s.title.replace(/"/g, '') + '">' +
+          '<option value="0">0</option><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option>' +
+        '</select></td><td><textarea class="manager-comment" rows="2" placeholder="Комментарий по навыку (необязательно)" aria-label="Комментарий: ' + s.title.replace(/"/g, '') + '"></textarea></td></tr>'
       ).join('');
-      el.innerHTML = '<table><thead><tr><th>Навык</th><th>Код</th><th>Уровень</th></tr></thead><tbody>' + rows + '</tbody></table>';
+      el.innerHTML = '<table><thead><tr><th>Навык</th><th>Код</th><th>Уровень</th><th>Комментарий</th></tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+
+    function fillDocsSlotForm(s) {
+      const d = document.getElementById('docsSlotDate');
+      const t = document.getElementById('docsSlotTime');
+      const msg = document.getElementById('docsSlotEditMsg');
+      if (msg) msg.textContent = '';
+      if (d) d.value = (s && s.docs_survey_slot_local_date) ? s.docs_survey_slot_local_date : '';
+      if (t) t.value = (s && s.docs_survey_slot_local_time) ? s.docs_survey_slot_local_time : '';
+    }
+
+    function updateDocsSlotUi(s) {
+      const wrap = document.getElementById('docsSlotEditWrap');
+      const panel = document.getElementById('docsSlotEditPanel');
+      const zoneEl = document.getElementById('docsSlotZoneHint');
+      if (!wrap || !panel) return;
+      if (!selectedEmployeeId) {
+        wrap.hidden = true;
+        panel.style.display = 'none';
+        return;
+      }
+      if (s && (s.status === 'completed' || s.status === 'cancelled')) {
+        wrap.hidden = true;
+        panel.style.display = 'none';
+        return;
+      }
+      wrap.hidden = false;
+      if (zoneEl) {
+        const z = (s && s.docs_survey_local_timezone) ? s.docs_survey_local_timezone : 'DOCS_SURVEY_LOCAL_TIMEZONE';
+        zoneEl.innerHTML = 'Слот опроса по документам (локальное время, зона <code>' + escapeHtml(z) + '</code>):';
+      }
+      fillDocsSlotForm(s || null);
     }
 
     async function refreshSessionRow() {
       const phaseEl = document.getElementById('phaseOut');
       if (!sessionId) {
-        phaseEl.textContent = '—';
+        phaseEl.textContent = selectedEmployeeId ? 'Активной единой сессии оценки пока нет: она создастся автоматически при запуске этапа 1 или сохранении слота.' : '—';
+        const planEl0 = document.getElementById('docsTelegramPlan');
+        if (planEl0) { planEl0.hidden = true; planEl0.textContent = ''; }
+        const linkEl0 = document.getElementById('docsEmployeeLink');
+        if (linkEl0) { linkEl0.hidden = true; linkEl0.textContent = ''; }
+        updateDocsSlotUi(null);
+        updateDocsPhasePanel(null);
         return;
       }
       try {
-        const r = await fetch(API + '/sessions/' + sessionId);
+        const r = await fetch(API + '/sessions/' + sessionId, FETCH_NO_STORE);
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const s = await r.json();
+        window.__saBizTz = s.docs_survey_local_timezone;
         phaseEl.textContent = 'phase: ' + s.phase + ' · status: ' + s.status + ' · id: ' + s.id;
+        const planEl = document.getElementById('docsTelegramPlan');
+        if (planEl) {
+          if (hideDocsSurveyTelegramHints(s)) {
+            planEl.hidden = true;
+            planEl.textContent = '';
+          } else {
+            function fmtMin2(label, m) {
+              if (m == null || m === undefined) return '';
+              if (m >= 0) return label + ' ≈ ' + m + ' мин';
+              return label + ' (время прошло, ' + m + ' мин)';
+            }
+            const pdOk2 = pdConsentAcceptedForReminder(s);
+            let mSlot2 = s.docs_survey_minutes_until_slot;
+            let mRem2 = s.docs_survey_minutes_until_reminder;
+            if (mSlot2 == null && s.docs_survey_scheduled_at) mSlot2 = minutesUntilIso(s.docs_survey_scheduled_at);
+            const nB = s.docs_survey_reminder_minutes_before != null ? s.docs_survey_reminder_minutes_before : 5;
+            if (pdOk2 && mRem2 == null && s.docs_survey_scheduled_at && !s.docs_survey_reminder_30m_sent_at) {
+              try {
+                const slotMs = parseUtcMs(s.docs_survey_scheduled_at);
+                if (!isNaN(slotMs)) {
+                  const remMs = slotMs - nB * 60000;
+                  mRem2 = Math.floor((remMs - Date.now()) / 60000);
+                }
+              } catch (_) {}
+            }
+            if (!pdOk2) mRem2 = null;
+            const lines = [];
+            if (s.docs_survey_reminder_30m_sent_at) {
+              lines.push('Напоминание в Telegram уже отправлено.');
+            } else if (pdOk2 && mRem2 != null) {
+              lines.push(fmtMin2('До напоминания («готов / не готов»)', mRem2));
+            }
+            if (mSlot2 != null) {
+              lines.push(fmtMin2('До времени слота опроса по документам', mSlot2));
+            }
+            if (s.docs_survey_telegram_schedule_hint) {
+              lines.push(s.docs_survey_telegram_schedule_hint);
+            } else if (s.docs_survey_reminder_minutes_before != null && s.docs_survey_local_timezone && !lines.length) {
+              lines.push('Часовой пояс слотов: ' + s.docs_survey_local_timezone + '. После выбора даты и времени в боте здесь появятся минуты до напоминания и слота.');
+            }
+            if (lines.length) {
+              planEl.hidden = false;
+              planEl.textContent = lines.join('\n\n');
+            } else {
+              planEl.hidden = true;
+              planEl.textContent = '';
+            }
+          }
+        }
+        const linkEl = document.getElementById('docsEmployeeLink');
+        if (linkEl) {
+          linkEl.hidden = true;
+          linkEl.textContent = '';
+        }
+        updateDocsSlotUi(s);
+        updateDocsPhasePanel(s);
       } catch (_) {
         phaseEl.textContent = 'Не удалось загрузить сессию. Обновите страницу.';
+        updateDocsSlotUi(null);
+        updateDocsPhasePanel(null);
       }
+    }
+
+    function updateDocsPhasePanel(s) {
+      const hint = document.getElementById('docsPhaseHint');
+      const wrap = document.getElementById('docsGotoPart2Wrap');
+      if (!hint || !wrap) return;
+      if (!sessionId) {
+        hint.textContent = selectedEmployeeId
+          ? 'Для сотрудника действует один общий цикл оценки. Запустите этап 1 или сохраните слот — система создаст или продолжит текущую сессию автоматически.'
+          : 'Сначала выберите сотрудника.';
+        wrap.hidden = true;
+        return;
+      }
+      if (!s) {
+        hint.textContent = 'Не удалось загрузить данные сессии.';
+        wrap.hidden = true;
+        return;
+      }
+      hint.textContent = 'Вопросы по регламенту задаются в экзамене в Telegram; ответы и оценка — в протоколе экзамена. Это та же общая сессия оценки. Чтобы перейти к кейсу без заполнения старого чек-листа, нажмите кнопку (доступна в фазе part1).';
+      const showBtn = s.status === 'in_progress' && s.phase === 'part1';
+      wrap.hidden = !showBtn;
     }
 
     async function selectEmployee(eid) {
@@ -806,7 +1517,7 @@
         document.getElementById('selectedEmpName').textContent = selectedEmployeeLabel;
         const wp = document.getElementById('workflowPanel');
         wp.hidden = false;
-        document.getElementById('sessionInfo').textContent = '';
+      document.getElementById('sessionInfo').textContent = '';
         document.getElementById('caseOut').hidden = true;
         document.getElementById('saveOut').textContent = '';
 
@@ -826,13 +1537,13 @@
         await loadSessionHistory();
 
         document.getElementById('btnSave').disabled = true;
-        document.getElementById('skillsMount').innerHTML = '<p class="meta">Нажмите «Создать сессию и старт» или продолжите существующую.</p>';
+        document.getElementById('skillsMount').innerHTML = '<p class="meta">Для этапов 1–3 используется одна общая сессия оценки. Запустите или продолжите цикл ниже.</p>';
 
         if (ls && ls.status === 'in_progress') {
           try {
-            await loadTaxonomy();
+      await loadTaxonomy();
             renderSkillsTable();
-            document.getElementById('btnSave').disabled = false;
+      document.getElementById('btnSave').disabled = false;
           } catch (err) {
             document.getElementById('skillsMount').innerHTML = '<p class="meta err">' + escapeHtml(err.message || String(err)) + '</p>';
             document.getElementById('btnSave').disabled = true;
@@ -842,14 +1553,14 @@
           sessionId = ls.id;
           await refreshSessionRow();
         } else if (ls && ls.status === 'completed') {
-          document.getElementById('skillsMount').innerHTML = '<p class="meta">Последняя сессия по этому сотруднику завершена. Нажмите «Создать сессию и старт», чтобы начать новую оценку.</p>';
+          document.getElementById('skillsMount').innerHTML = '<p class="meta">Последний цикл оценки по этому сотруднику завершён. При следующем запуске будет создана новая единая сессия.</p>';
           document.getElementById('sessionInfo').innerHTML = 'Статус: <strong>completed</strong> (сессия ' + ls.id.substring(0, 8) + '…).';
           document.getElementById('btnSave').disabled = true;
           sessionId = null;
           await refreshSessionRow();
         } else {
           sessionId = null;
-          document.getElementById('phaseOut').textContent = '—';
+          await refreshSessionRow();
         }
 
         requestAnimationFrame(function() {
@@ -866,49 +1577,14 @@
       const info = document.getElementById('sessionInfo');
       info.textContent = '';
       if (!selectedEmployeeId) return;
-
-      const existing = latestSessionForEmployee(selectedEmployeeId);
-      if (existing && existing.status === 'completed') {
-        const r = await fetch(API + '/sessions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ client_id: clientId, employee_id: selectedEmployeeId })
-        });
-        const j = await r.json();
-        if (!r.ok) { info.innerHTML = '<span class="err">Ошибка создания сессии</span>'; return; }
-        sessionId = j.id;
-      } else if (!sessionId) {
-        const r = await fetch(API + '/sessions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ client_id: clientId, employee_id: selectedEmployeeId })
-        });
-        const j = await r.json();
-        if (!r.ok) { info.innerHTML = '<span class="err">Ошибка создания сессии</span>'; return; }
-        sessionId = j.id;
+      let ensured = null;
+      try {
+        ensured = await ensureWorkflowSession({ autostart: true, infoEl: info });
+      } catch (err) {
+        info.innerHTML = '<span class="err">' + escapeHtml(err.message || String(err)) + '</span>';
+        return;
       }
-
-      const row = await fetch(API + '/sessions/' + sessionId).then(r => r.json());
-      let startTelegram = null;
-      if (row.status === 'draft') {
-        const sr = await fetch(API + '/sessions/' + sessionId + '/start', { method: 'POST' });
-        const startJson = await sr.json();
-        startTelegram = startJson.docs_survey_telegram || null;
-      }
-
-      const tgEl = document.getElementById('docsTelegramStatus');
-      if (tgEl) {
-        if (startTelegram && startTelegram.sent) {
-          tgEl.hidden = false;
-          tgEl.innerHTML = '<span class="ok">В Telegram отправлено уведомление</span> (chat_id: <code>' + escapeHtml(String(startTelegram.chat_id || '')) + ').';
-        } else if (startTelegram && startTelegram.skipped_reason) {
-          tgEl.hidden = false;
-          tgEl.innerHTML = '<span class="meta">Telegram: не отправлено — ' + escapeHtml(String(startTelegram.skipped_reason)) + '</span>';
-        } else {
-          tgEl.hidden = true;
-          tgEl.textContent = '';
-        }
-      }
+      renderStartTelegramStatus(ensured.startTelegram);
 
       try {
         await loadTaxonomy();
@@ -921,7 +1597,7 @@
         return;
       }
 
-      info.innerHTML = 'Сессия: <code>' + sessionId + '</code>. Фаза: <strong>опрос по документам</strong> (part1). Дальше — этап 2 (кейс) и этап 3 (оценки).';
+      info.innerHTML = 'Единая сессия оценки: <code>' + sessionId + '</code>. Активный этап: <strong>part1</strong> (Telegram, слот, экзамен по регламентам). Дальше — этап 2 (кейс) и этап 3 (оценки).';
       document.getElementById('btnSave').disabled = false;
       await refreshSessionRow();
       await loadRosterData();
@@ -932,17 +1608,170 @@
       });
     };
 
-    document.getElementById('btnCase').onclick = async () => {
+    function employeeCasePageUrl(token, skillId) {
+      if (!token) return '';
+      let url = '/api/skill-assessment/ui/part2-case?token=' + encodeURIComponent(token);
+      if (skillId) url += '&skill_id=' + encodeURIComponent(skillId);
+      return url;
+    }
+
+    async function loadCasePreview() {
       const pre = document.getElementById('caseOut');
+      const linkEl = document.getElementById('caseLinkOut');
+      if (linkEl) {
+        linkEl.hidden = true;
+        linkEl.textContent = '';
+      }
+      if (!sessionId && selectedEmployeeId) {
+        try {
+          const ensured = await ensureWorkflowSession({ autostart: true });
+          renderStartTelegramStatus(ensured.startTelegram);
+          await refreshSessionRow();
+          await loadRosterData();
+        } catch (err) {
+          pre.hidden = false;
+          pre.textContent = err.message || String(err);
+          return;
+        }
+      }
       if (!sessionId || !skills[0]) {
         pre.hidden = false;
-        pre.textContent = 'Нужна активная сессия (нажмите «Создать сессию и старт»).';
+        pre.textContent = 'Нужна активная общая сессия оценки. Выберите сотрудника и запустите этап 1.';
         return;
       }
-      const r = await fetch(API + '/sessions/' + sessionId + '/case?skill_id=' + encodeURIComponent(skills[0].id));
-      const j = await r.json();
+      const [caseResp, sessionResp] = await Promise.all([
+        fetch(API + '/sessions/' + sessionId + '/part2-cases'),
+        fetch(API + '/sessions/' + encodeURIComponent(sessionId), FETCH_NO_STORE),
+      ]);
+      const j = await caseResp.json().catch(function() { return null; });
+      const sj = await sessionResp.json().catch(function() { return null; });
       pre.hidden = false;
-      pre.textContent = r.ok ? j.text : JSON.stringify(j);
+      if (caseResp.ok && j && Array.isArray(j.cases)) {
+        const lines = [];
+        lines.push('Кейсов: ' + String(j.case_count || j.cases.length || 0) + '. Время: ' + String(j.allotted_minutes || 0) + ' мин.');
+        if (Array.isArray(j.covered_skills) && j.covered_skills.length) {
+          lines.push('Покрываемые навыки: ' + j.covered_skills.map(function(s) {
+            return String(s.skill_title || '') + ' (' + String(s.skill_code || '') + ')';
+          }).join(', '));
+        }
+        if (Array.isArray(j.remaining_skills) && j.remaining_skills.length) {
+          lines.push('Ещё не покрыты: ' + j.remaining_skills.map(function(s) {
+            return String(s.skill_title || '') + ' (' + String(s.skill_code || '') + ')';
+          }).join(', '));
+        } else {
+          lines.push('Все навыки уже покрыты текущим набором кейсов.');
+        }
+        if (j.completed) {
+          lines.push('Итог ИИ: ' + String(j.solved_cases || 0) + '/' + String(j.case_count || 0) + ' = ' + String(j.overall_pct || 0) + '%.');
+          if (j.ai_commission_consensus) {
+            lines.push(
+              'AI-комиссия: ' +
+              String(j.ai_commission_consensus.overall_level_0_3 == null ? '—' : j.ai_commission_consensus.overall_level_0_3) +
+              '/3 · ' +
+              String(j.ai_commission_consensus.overall_pct_0_100 == null ? '—' : j.ai_commission_consensus.overall_pct_0_100) +
+              '%.'
+            );
+            if (j.ai_commission_consensus.summary) lines.push(String(j.ai_commission_consensus.summary));
+            if (Array.isArray(j.ai_commission_consensus.strengths) && j.ai_commission_consensus.strengths.length) {
+              lines.push('Сильные стороны: ' + j.ai_commission_consensus.strengths.join(', '));
+            }
+            if (Array.isArray(j.ai_commission_consensus.risks) && j.ai_commission_consensus.risks.length) {
+              lines.push('Риски: ' + j.ai_commission_consensus.risks.join(', '));
+            }
+            if (j.ai_commission_consensus.recommendation) {
+              lines.push('Рекомендация: ' + String(j.ai_commission_consensus.recommendation));
+            }
+          }
+        }
+        if (j.llm_costs) {
+          lines.push('');
+          lines.push('LLM-вызовы (HR): входящие токены ' +
+            String(j.llm_costs.total_input_tokens || 0) +
+            ', исходящие токены ' + String(j.llm_costs.total_output_tokens || 0) + '.');
+          lines.push('Стоимость LLM-вызовов (HR): ' +
+            String(j.llm_costs.total_cost_usd || 0) + ' USD / ' +
+            String(j.llm_costs.total_cost_rub || 0) + ' RUB' +
+            ' (курс ' + String(j.llm_costs.usd_to_rub_rate || 0) + ').');
+          if (Array.isArray(j.llm_costs.steps) && j.llm_costs.steps.length) {
+            j.llm_costs.steps.forEach(function(step) {
+              lines.push(
+                '- ' + String(step.label || step.step || 'step') +
+                ': вызовов ' + String(step.calls || 0) +
+                ', input ' + String(step.input_tokens || 0) +
+                ', output ' + String(step.output_tokens || 0) +
+                ', всего токенов ' + String(step.total_tokens || 0) +
+                ', стоимость ' + String(step.cost_usd || 0) + ' USD / ' + String(step.cost_rub || 0) + ' RUB'
+              );
+            });
+          }
+        }
+        j.cases.forEach(function(item, idx) {
+          const covered = Array.isArray(item.covered_skills) && item.covered_skills.length
+            ? item.covered_skills.map(function(s) { return String(s.skill_title || '') + ' (' + String(s.skill_code || '') + ')'; }).join(', ')
+            : (String(item.skill_title || '') + ' (' + String(item.skill_code || '') + ')');
+          lines.push('');
+          lines.push('Кейс ' + String(idx + 1) + ': ' + covered);
+          lines.push(String(item.text || ''));
+          if (item.passed != null) {
+            lines.push(
+              'Результат: ' + (item.passed ? 'решён' : 'не решён') +
+              ((item.case_level_0_3 != null || item.case_pct_0_100 != null)
+                ? ' · ' + String(item.case_level_0_3 == null ? '—' : item.case_level_0_3) + '/3 · ' +
+                  String(item.case_pct_0_100 == null ? '—' : item.case_pct_0_100) + '%'
+                : '') +
+              (item.evaluation_note ? ' — ' + String(item.evaluation_note) : '')
+            );
+          }
+          if (Array.isArray(item.skill_evaluations) && item.skill_evaluations.length) {
+            item.skill_evaluations.forEach(function(skill) {
+              lines.push(
+                '  • ' + String(skill.skill_title || skill.skill_code || skill.skill_id || '') +
+                ': ' + String(skill.level_0_3 == null ? '—' : skill.level_0_3) +
+                '/3 · ' + String(skill.pct_0_100 == null ? '—' : skill.pct_0_100) + '%' +
+                (skill.evidence ? ' · evidence: ' + String(skill.evidence) : '') +
+                (skill.gaps ? ' · gaps: ' + String(skill.gaps) : '')
+              );
+            });
+          }
+        });
+        pre.textContent = lines.join('\n');
+      } else {
+        pre.textContent = JSON.stringify(j || { detail: 'case_load_failed' });
+      }
+      if (linkEl && sessionResp.ok && sj && sj.part1_docs_checklist_token) {
+        const href = employeeCasePageUrl(sj.part1_docs_checklist_token);
+        linkEl.hidden = false;
+        linkEl.innerHTML = 'Открыть страницу сотрудника: <a href="' + href + '" target="_blank" rel="noopener">решение кейсов в вебе</a>';
+      }
+    }
+
+    document.getElementById('btnCase').onclick = async () => {
+      await loadCasePreview();
+    };
+
+    document.getElementById('btnAdditionalCases').onclick = async () => {
+      const out = document.getElementById('caseAdminStatus');
+      if (out) out.textContent = '';
+      try {
+        await ensureWorkflowSession({ autostart: false });
+        if (!sessionId) throw new Error('Нет активной сессии');
+        const r = await fetch(API + '/sessions/' + encodeURIComponent(sessionId) + '/part2-cases/additional', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ skill_ids: [] })
+        });
+        const j = await r.json().catch(function() { return null; });
+        if (!r.ok) {
+          let msg = 'HTTP ' + r.status;
+          if (j && j.detail) msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+          if (out) out.innerHTML = '<span class="err">' + escapeHtml(msg) + '</span>';
+          return;
+        }
+        if (out) out.innerHTML = '<span class="ok">Дополнительные кейсы сформированы.</span>';
+        await loadCasePreview();
+      } catch (err) {
+        if (out) out.innerHTML = '<span class="err">' + escapeHtml(err.message || String(err)) + '</span>';
+      }
     };
 
     document.getElementById('btnSave').onclick = async () => {
@@ -953,7 +1782,11 @@
       document.querySelectorAll('#skillsMount tbody tr').forEach(tr => {
         const sid = tr.getAttribute('data-skill-id');
         const lv = parseInt(tr.querySelector('select.level').value, 10);
-        ratings.push({ skill_id: sid, level: lv });
+        const ta = tr.querySelector('textarea.manager-comment');
+        const commentRaw = ta ? ta.value.trim() : '';
+        const payload = { skill_id: sid, level: lv };
+        if (commentRaw) payload.comment = commentRaw;
+        ratings.push(payload);
       });
       const r = await fetch(API + '/sessions/' + sessionId + '/manager-ratings', {
         method: 'POST',
@@ -973,17 +1806,247 @@
 
     document.getElementById('btnRefreshRoster').onclick = () => loadRosterData();
 
+    document.getElementById('btnGotoPart2').onclick = async function() {
+      const statusEl = document.getElementById('docsChecklistStatus');
+      if (!sessionId) return;
+      if (statusEl) statusEl.innerHTML = '';
+      try {
+        const r = await fetch(API + '/sessions/' + encodeURIComponent(sessionId) + '/phase', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phase: 'part2' })
+        });
+        const j = await r.json().catch(function() { return null; });
+        if (!r.ok) {
+          let msg = 'HTTP ' + r.status;
+          if (j && j.detail) {
+            msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+          }
+          if (statusEl) statusEl.innerHTML = '<span class="err">' + escapeHtml(msg) + '</span>';
+          return;
+        }
+        if (statusEl) statusEl.innerHTML = '<span class="ok">Фаза переключена на part2. Загружаю кейс ниже.</span>';
+        await refreshSessionRow();
+        await loadRosterData();
+        await loadCasePreview();
+        const stepCase = document.getElementById('stepCase');
+        if (stepCase) stepCase.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch (e) {
+        if (statusEl) statusEl.innerHTML = '<span class="err">' + escapeHtml(e.message || String(e)) + '</span>';
+      }
+    };
+
+    async function focusSessionById(sid) {
+      const r = await fetch(API + '/sessions/' + encodeURIComponent(sid), FETCH_NO_STORE);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const s = await r.json();
+      selectedEmployeeId = s.employee_id;
+      const e = employeesCache.find(x => normId(x.id) === normId(s.employee_id));
+      selectedEmployeeLabel = e ? empLabel(e) : String(s.employee_id || '');
+      document.getElementById('selectedEmpName').textContent = selectedEmployeeLabel;
+      sessionId = s.id;
+      const wp = document.getElementById('workflowPanel');
+      wp.hidden = false;
+      renderRoster();
+      histPage = 0;
+      fillHistEmployeeSelect();
+      const hfs = document.getElementById('histFilterEmployee');
+      if (hfs && s.employee_id) {
+        const want = normId(s.employee_id);
+        const opt = [...hfs.options].find(o => normId(o.value) === want);
+        if (opt) hfs.value = opt.value;
+      }
+      try {
+        await loadTaxonomy();
+        renderSkillsTable();
+        document.getElementById('btnSave').disabled = s.status !== 'in_progress';
+      } catch (err) {
+        document.getElementById('skillsMount').innerHTML = '<p class="meta err">' + escapeHtml(err.message || String(err)) + '</p>';
+        document.getElementById('btnSave').disabled = true;
+      }
+      document.getElementById('sessionInfo').innerHTML = 'Сессия: <code>' + sessionId + '</code> · фаза: <code>' + s.phase + '</code> · статус: <code>' + s.status + '</code>';
+      await refreshSessionRow();
+      await loadSessionHistory();
+      requestAnimationFrame(function() {
+        wp.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+
     function applySessionFromUrl() {
       const u = new URLSearchParams(window.location.search);
       const sid = u.get('session_id');
       if (sid && /^[0-9a-f-]{36}$/i.test(sid)) {
-        fetch(API + '/sessions/' + encodeURIComponent(sid)).then(r => r.ok ? r.json() : null).then(s => {
-          if (s && s.employee_id) selectEmployee(s.employee_id);
-        }).catch(() => {});
+        focusSessionById(sid).catch(function() {});
       }
     }
 
-    loadRosterData().then(applySessionFromUrl);
+    loadRosterData().then(function () {
+      applySessionFromUrl();
+      if (location.hash === '#ref-eval-table') {
+        document.dispatchEvent(new CustomEvent('sa-focus-ref-eval'));
+      }
+    });
+
+    (function() {
+      const btnT = document.getElementById('btnDocsSlotToggle');
+      const btnS = document.getElementById('btnDocsSlotSave');
+      if (btnT) btnT.addEventListener('click', function() {
+        const panel = document.getElementById('docsSlotEditPanel');
+        if (!panel) return;
+        if (panel.style.display === 'none' || panel.style.display === '') {
+          panel.style.display = 'flex';
+        } else {
+          panel.style.display = 'none';
+        }
+      });
+      if (btnS) btnS.addEventListener('click', async function() {
+        const msg = document.getElementById('docsSlotEditMsg');
+        const d = document.getElementById('docsSlotDate');
+        const t = document.getElementById('docsSlotTime');
+        if (!d || !d.value || !t || !t.value) {
+          if (msg) msg.textContent = 'Укажите дату и время.';
+          return;
+        }
+        if (msg) msg.textContent = 'Сохранение…';
+        try {
+          if (!sessionId) {
+            const ensured = await ensureWorkflowSession({ autostart: true });
+            renderStartTelegramStatus(ensured.startTelegram);
+          }
+          const r = await fetch(API + '/sessions/' + encodeURIComponent(sessionId) + '/docs-survey-slot', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ local_date: d.value, local_time: t.value })
+          });
+          const j = await r.json().catch(function() { return {}; });
+          if (!r.ok) {
+            const detail = j.detail;
+            const errText = typeof detail === 'string' ? detail : (detail && detail.code) || (j.error && j.error.code) || JSON.stringify(j);
+            throw new Error(errText);
+          }
+          let okLine = '<span class="ok">Слот сохранён</span>';
+          if (j.docs_survey_slot_local_label) {
+            okLine += ' — <strong>' + escapeHtml(String(j.docs_survey_slot_local_label)) + '</strong>';
+          }
+          if (j.docs_survey_minutes_until_slot != null && j.docs_survey_minutes_until_slot < 0) {
+            okLine += '<br/><span class="meta">Слот в прошлом: при фильтре «Предстоящие» эта сессия в таблице не показывается. Поставьте «Все» в «Слот опроса».</span>';
+          }
+          if (msg) msg.innerHTML = okLine;
+          if (j && j.id && Array.isArray(sessionsCache)) {
+            const ix = sessionsCache.findIndex(function(x) { return x && normId(x.id) === normId(j.id); });
+            if (ix >= 0) sessionsCache[ix] = j;
+          }
+          try { renderRoster(); } catch (_) {}
+          histPage = 0;
+          await refreshSessionRow();
+          await loadSessionHistory();
+        } catch (e) {
+          if (msg) msg.innerHTML = '<span class="err">' + escapeHtml(e.message || String(e)) + '</span>';
+        }
+      });
+    })();
+
+    (function () {
+      function setMainView(view) {
+        var session = document.getElementById('viewSession');
+        var skills = document.getElementById('viewCatalogSkills');
+        var kpi = document.getElementById('viewCatalogKpi');
+        if (session) session.hidden = view !== 'session';
+        if (skills) skills.hidden = view !== 'skills';
+        if (kpi) kpi.hidden = view !== 'kpi';
+        var navs = document.querySelectorAll('.catalog-nav');
+        for (var i = 0; i < navs.length; i++) {
+          navs[i].classList.toggle('active', navs[i].getAttribute('data-view') === view);
+        }
+        if (view === 'skills') loadCatalogSkills();
+        if (view === 'kpi') loadCatalogKpi();
+      }
+
+      function fmtTarget(v) {
+        if (v === null || v === undefined) return '—';
+        return String(v);
+      }
+
+      async function loadCatalogSkills() {
+        var tb = document.getElementById('catalogSkillsBody');
+        var err = document.getElementById('catalogSkillsErr');
+        if (!tb) return;
+        if (err) { err.hidden = true; err.textContent = ''; }
+        tb.innerHTML = '<tr><td colspan="7" class="meta">Загрузка…</td></tr>';
+        try {
+          var r = await fetch(API + '/catalog/competency-matrix', FETCH_NO_STORE);
+          if (!r.ok) throw new Error(await r.text());
+          var rows = await r.json();
+          if (!rows.length) {
+            tb.innerHTML = '<tr><td colspan="7" class="meta">Нет строк — выполните засев каталога (перезапуск API после обновления плагина).</td></tr>';
+            return;
+          }
+          tb.innerHTML = rows.map(function(row) {
+            return '<tr><td>' + escapeHtml(String(row.version_code)) + '</td><td><code>' + escapeHtml(String(row.position_code)) + '</code></td><td><code>' + escapeHtml(String(row.department_code)) + '</code></td><td class="num">' + row.skill_rank + '</td><td><code>' + escapeHtml(String(row.skill_code)) + '</code></td><td>' + escapeHtml(String(row.skill_title_ru)) + '</td><td>' + (row.is_active ? 'да' : 'нет') + '</td></tr>';
+          }).join('');
+        } catch (e) {
+          if (err) { err.hidden = false; err.textContent = e.message || String(e); }
+          tb.innerHTML = '<tr><td colspan="7" class="meta err">Ошибка загрузки</td></tr>';
+        }
+      }
+
+      async function loadCatalogKpi() {
+        var tb = document.getElementById('catalogKpiBody');
+        var err = document.getElementById('catalogKpiErr');
+        if (!tb) return;
+        if (err) { err.hidden = true; err.textContent = ''; }
+        tb.innerHTML = '<tr><td colspan="10" class="meta">Загрузка…</td></tr>';
+        try {
+          var r = await fetch(API + '/catalog/kpi-matrix', FETCH_NO_STORE);
+          if (!r.ok) throw new Error(await r.text());
+          var rows = await r.json();
+          if (!rows.length) {
+            tb.innerHTML = '<tr><td colspan="10" class="meta">Нет строк — выполните засев KPI (перезапуск API).</td></tr>';
+            return;
+          }
+          tb.innerHTML = rows.map(function(row) {
+            return '<tr><td>' + escapeHtml(String(row.version_code)) + '</td><td><code>' + escapeHtml(String(row.position_code)) + '</code></td><td><code>' + escapeHtml(String(row.department_code)) + '</code></td><td class="num">' + row.kpi_rank + '</td><td><code>' + escapeHtml(String(row.kpi_code)) + '</code></td><td>' + escapeHtml(String(row.kpi_title_ru)) + '</td><td>' + escapeHtml(String(row.unit)) + '</td><td>' + escapeHtml(String(row.period_type)) + '</td><td>' + fmtTarget(row.default_target) + '</td><td>' + (row.is_active ? 'да' : 'нет') + '</td></tr>';
+          }).join('');
+        } catch (e) {
+          if (err) { err.hidden = false; err.textContent = e.message || String(e); }
+          tb.innerHTML = '<tr><td colspan="10" class="meta err">Ошибка загрузки</td></tr>';
+        }
+      }
+
+      document.querySelectorAll('.catalog-nav').forEach(function(a) {
+        a.addEventListener('click', function(e) {
+          e.preventDefault();
+          setMainView(a.getAttribute('data-view'));
+        });
+      });
+
+      function focusRefEvalTable() {
+        setMainView('session');
+        requestAnimationFrame(function () {
+          var el = document.getElementById('ref-eval-table');
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      }
+      document.addEventListener('sa-focus-ref-eval', focusRefEvalTable);
+      window.addEventListener('hashchange', function () {
+        if (location.hash === '#ref-eval-table') focusRefEvalTable();
+      });
+      var navRef = document.getElementById('navToRefEval');
+      if (navRef) {
+        navRef.addEventListener('click', function (e) {
+          e.preventDefault();
+          focusRefEvalTable();
+          try {
+            history.replaceState(null, '', location.pathname + location.search + '#ref-eval-table');
+          } catch (_) {}
+        });
+      }
+
+      var btnS = document.getElementById('btnRefreshCatalogSkills');
+      if (btnS) btnS.addEventListener('click', function() { loadCatalogSkills(); });
+      var btnK = document.getElementById('btnRefreshCatalogKpi');
+      if (btnK) btnK.addEventListener('click', function() { loadCatalogKpi(); });
+    })();
   </script>
 </body>
 </html>

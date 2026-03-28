@@ -1,0 +1,221 @@
+<!-- route: GET /api/skill-assessment/ui/part2-case | file: skill_assessment/static/part2_case_employee.html -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Кейсы для оценки навыков</title>
+  <link rel="stylesheet" href="/static/shared/layout.css">
+  <style>
+    .wrap { max-width: 44rem; margin: 0 auto; padding: 1.5rem; box-sizing: border-box; }
+    .block { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.25rem; margin-top: 1rem; }
+    h1 { font-size: 1.2rem; margin: 0 0 0.5rem 0; color: var(--accent); }
+    .meta { font-size: 0.85rem; color: var(--text-muted); margin: 0.35rem 0; }
+    .ok { color: var(--success); }
+    .err { color: var(--error); }
+    .case { white-space: pre-wrap; word-break: break-word; line-height: 1.55; font-size: 0.95rem; }
+    .case-head { display:flex; justify-content:space-between; gap:1rem; align-items:baseline; flex-wrap:wrap; }
+    .badge { display:inline-block; font-size:0.78rem; border:1px solid var(--border); border-radius:999px; padding:0.12rem 0.5rem; }
+    .score { font-weight:600; }
+    .row-actions { display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; margin-top:1rem; }
+    .skill-list { margin: 0.6rem 0 0 1rem; padding: 0; }
+    .skill-list li { margin: 0.35rem 0; }
+    .consensus { margin-top: 1rem; }
+    textarea { width: 100%; min-height: 12rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: inherit; padding: 0.75rem; box-sizing: border-box; resize: vertical; }
+    button { padding: 0.45rem 0.85rem; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: inherit; cursor: pointer; font-size: 0.88rem; }
+    button.primary { background: rgba(124,58,237,0.25); border-color: var(--accent); color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Часть 2. Решение кейсов</h1>
+    <p class="meta" id="intro">Решите все кейсы в пределах общего времени. Черновики сохраняются только в браузере на этом устройстве до отправки.</p>
+    <p class="meta" id="caseMeta"></p>
+    <p class="meta" id="submitStatus"></p>
+    <div id="mount"><p class="meta">Загрузка кейсов…</p></div>
+  </div>
+  <script>
+    const API = '/api/skill-assessment/public/part2-cases';
+    const REPORT_HTML = '/api/skill-assessment/public/report/html';
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    const draftKey = 'sa_part2_case_draft_' + (token || '');
+
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function loadDrafts() {
+      try {
+        const raw = window.localStorage.getItem(draftKey) || '{}';
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch (_) {
+        return {};
+      }
+    }
+
+    function saveDraft(caseId, value) {
+      const drafts = loadDrafts();
+      drafts[caseId] = value || '';
+      window.localStorage.setItem(draftKey, JSON.stringify(drafts));
+    }
+
+    function scoreLabel(data) {
+      return String(data.solved_cases || 0) + '/' + String(data.case_count || 0) + ' = ' + String(data.overall_pct || 0) + '%';
+    }
+
+    function renderSkillEvaluations(item) {
+      if (!Array.isArray(item.skill_evaluations) || !item.skill_evaluations.length) return '';
+      const rows = item.skill_evaluations.map(function(skill) {
+        const title = String(skill.skill_title || skill.skill_code || skill.skill_id || '');
+        const level = skill.level_0_3 == null ? '—' : String(skill.level_0_3) + '/3';
+        const pct = skill.pct_0_100 == null ? '—' : String(skill.pct_0_100) + '%';
+        const evidence = skill.evidence ? ' Подтверждение: ' + String(skill.evidence) : '';
+        const gaps = skill.gaps ? ' Пробелы: ' + String(skill.gaps) : '';
+        return '<li><strong>' + escapeHtml(title) + '</strong>: ' + escapeHtml(level) + ', ' + escapeHtml(pct) + '.' +
+          escapeHtml(evidence + gaps) + '</li>';
+      }).join('');
+      return '<div style="margin-top:0.8rem;"><strong>Оценка навыков по кейсу:</strong><ul class="skill-list">' + rows + '</ul></div>';
+    }
+
+    function renderConsensus(data) {
+      const consensus = data && data.ai_commission_consensus;
+      if (!consensus) return '';
+      const score = (consensus.overall_level_0_3 == null && consensus.overall_pct_0_100 == null)
+        ? ''
+        : '<p class="meta">Итог AI-комиссии: <strong>' +
+          escapeHtml(String(consensus.overall_level_0_3 == null ? '—' : consensus.overall_level_0_3)) +
+          '/3 · ' +
+          escapeHtml(String(consensus.overall_pct_0_100 == null ? '—' : consensus.overall_pct_0_100)) +
+          '%</strong></p>';
+      const strengths = Array.isArray(consensus.strengths) && consensus.strengths.length
+        ? '<p class="meta"><strong>Сильные стороны:</strong> ' + escapeHtml(consensus.strengths.join(', ')) + '</p>'
+        : '';
+      const risks = Array.isArray(consensus.risks) && consensus.risks.length
+        ? '<p class="meta"><strong>Риски:</strong> ' + escapeHtml(consensus.risks.join(', ')) + '</p>'
+        : '';
+      const recommendation = consensus.recommendation
+        ? '<p class="meta"><strong>Рекомендация:</strong> ' + escapeHtml(String(consensus.recommendation)) + '</p>'
+        : '';
+      return '<div class="block consensus"><h2 style="margin:0 0 0.5rem 0;font-size:1rem;">Итог AI-комиссии</h2>' +
+        score +
+        '<p class="meta">' + escapeHtml(String(consensus.summary || '')) + '</p>' +
+        strengths + risks + recommendation +
+        '</div>';
+    }
+
+    function renderCases(data) {
+      const mount = document.getElementById('mount');
+      const meta = document.getElementById('caseMeta');
+      const submitStatus = document.getElementById('submitStatus');
+      if (!mount) return;
+      if (meta) {
+        const covered = Array.isArray(data.covered_skills) ? data.covered_skills.map(function(s) {
+          return String(s.skill_title || '') + ' (' + String(s.skill_code || '') + ')';
+        }).join(', ') : '';
+        meta.innerHTML =
+          'Кейсов: <strong>' + escapeHtml(String(data.case_count || 0)) + '</strong>, ' +
+          'время на решение: <strong>' + escapeHtml(String(data.allotted_minutes || 0)) + ' мин.</strong>, ' +
+          'текущая фаза: <code>' + escapeHtml(String(data.phase || 'part2')) + '</code>.' +
+          (covered ? ' Навыки, которые должны быть покрыты кейсами: <strong>' + escapeHtml(covered) + '</strong>.' : '');
+      }
+      const drafts = loadDrafts();
+      const blocks = data.cases.map(function(item, idx) {
+        const answer = item.answer || drafts[item.case_id] || '';
+        const covered = Array.isArray(item.covered_skills) && item.covered_skills.length
+          ? item.covered_skills.map(function(s) { return String(s.skill_title || '') + ' (' + String(s.skill_code || '') + ')'; }).join(', ')
+          : (String(item.skill_title || '') + ' (' + String(item.skill_code || '') + ')');
+        const result = item.passed == null
+          ? '<p class="meta">Результат появится после отправки всех кейсов.</p>'
+          : '<p class="meta ' + (item.passed ? 'ok' : 'err') + '">Результат кейса: <strong>' +
+            (item.passed ? 'решён' : 'не решён') + '</strong>' +
+            ((item.case_level_0_3 != null || item.case_pct_0_100 != null)
+              ? ' · оценка <strong>' + escapeHtml(String(item.case_level_0_3 == null ? '—' : item.case_level_0_3)) +
+                '/3 · ' + escapeHtml(String(item.case_pct_0_100 == null ? '—' : item.case_pct_0_100)) + '%</strong>'
+              : '') +
+            (item.evaluation_note ? ' — ' + escapeHtml(item.evaluation_note) : '') +
+            '</p>';
+        return '<div class="block">' +
+          '<div class="case-head"><h2 style="margin:0;font-size:1rem;">Кейс ' + (idx + 1) + '</h2>' +
+          '<span class="badge">' + escapeHtml(String(item.skill_title || '')) + ' (' + escapeHtml(String(item.skill_code || '')) + ')</span></div>' +
+          '<p class="meta">Навыки, которые должен показать этот кейс: <strong>' + escapeHtml(covered) + '</strong>.</p>' +
+          '<p class="meta">Источник: <code>' + escapeHtml(item.source) + '</code></p>' +
+          '<div class="case">' + escapeHtml(item.text) + '</div>' +
+          '<div style="margin-top:1rem;"><textarea data-case-id="' + escapeHtml(item.case_id) + '" placeholder="Опишите решение: шаги, ограничения, согласования, опору на регламенты и KPI.">' + escapeHtml(answer) + '</textarea></div>' +
+          result +
+          renderSkillEvaluations(item) +
+          '</div>';
+      }).join('');
+      mount.innerHTML = blocks + renderConsensus(data) + '<div class="row-actions">' +
+        '<button type="button" class="primary" id="btnSubmitCases">Отправить все кейсы на оценку ИИ</button>' +
+        '<span class="meta" id="draftStatus"></span></div>';
+      if (submitStatus) {
+        submitStatus.innerHTML = data.completed
+          ? '<span class="ok">Итог по кейсам: <span class="score">' + escapeHtml(scoreLabel(data)) + '</span>.</span> ' +
+            '<a href="' + REPORT_HTML + '?token=' + encodeURIComponent(token) + '" target="_blank" rel="noopener">Открыть общий протокол</a>'
+          : '';
+      }
+      document.querySelectorAll('textarea[data-case-id]').forEach(function(ta) {
+        ta.addEventListener('input', function() {
+          saveDraft(ta.getAttribute('data-case-id'), ta.value || '');
+          const status = document.getElementById('draftStatus');
+          if (status) status.innerHTML = '<span class="ok">Черновики сохранены локально.</span>';
+        });
+      });
+      const btn = document.getElementById('btnSubmitCases');
+      if (btn) {
+        btn.onclick = function() { submitCases(data); };
+      }
+    }
+
+    async function submitCases(data) {
+      const status = document.getElementById('submitStatus');
+      const answers = [];
+      document.querySelectorAll('textarea[data-case-id]').forEach(function(ta) {
+        answers.push({ case_id: ta.getAttribute('data-case-id'), answer: ta.value || '' });
+      });
+      if (status) status.textContent = 'Отправка на оценку ИИ…';
+      try {
+        const r = await fetch(API + '?token=' + encodeURIComponent(token), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ answers: answers })
+        });
+        const j = await r.json().catch(function() { return null; });
+        if (!r.ok) {
+          const msg = (j && j.detail) ? (typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)) : ('HTTP ' + r.status);
+          if (status) status.innerHTML = '<span class="err">' + escapeHtml(msg) + '</span>';
+          return;
+        }
+        if (status) status.innerHTML = '<span class="ok">Оценка завершена: <strong>' + escapeHtml(scoreLabel(j)) + '</strong>.</span>';
+        renderCases(j);
+      } catch (e) {
+        if (status) status.innerHTML = '<span class="err">' + escapeHtml(e.message || String(e)) + '</span>';
+      }
+    }
+
+    (async function() {
+      const mount = document.getElementById('mount');
+      if (!token || token.length < 16) {
+        if (mount) mount.innerHTML = '<p class="meta err">Нет или слишком короткий параметр <code>token</code> в адресе страницы.</p>';
+        return;
+      }
+      try {
+        const r = await fetch(API + '?token=' + encodeURIComponent(token));
+        const j = await r.json().catch(function() { return null; });
+        if (!r.ok) {
+          const msg = (j && j.detail) ? (typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)) : ('HTTP ' + r.status);
+          if (mount) mount.innerHTML = '<p class="meta err">' + escapeHtml(msg) + '</p>';
+          return;
+        }
+        renderCases(j);
+      } catch (e) {
+        if (mount) mount.innerHTML = '<p class="meta err">' + escapeHtml(e.message || String(e)) + '</p>';
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,145 @@
+<!-- route: GET /api/skill-assessment/ui/part1-docs-checklist | file: skill_assessment/static/part1_docs_employee.html -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Опрос по служебным документам</title>
+  <link rel="stylesheet" href="/static/shared/layout.css">
+  <style>
+    .wrap { max-width: 40rem; margin: 0 auto; padding: 1.5rem; box-sizing: border-box; }
+    .block { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.25rem; margin-top: 1rem; }
+    h1 { font-size: 1.2rem; margin: 0 0 0.5rem 0; color: var(--accent); }
+    .meta { font-size: 0.85rem; color: var(--text-muted); margin: 0.35rem 0; }
+    .docs-q { margin-bottom: 1rem; }
+    .docs-q label { display: block; font-weight: 600; margin-bottom: 0.25rem; }
+    select.docs-q-sel { width: 100%; max-width: 22rem; padding: 0.45rem 0.5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: inherit; }
+    .row-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.75rem; }
+    button { padding: 0.45rem 0.85rem; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: inherit; cursor: pointer; font-size: 0.88rem; }
+    button.primary { background: rgba(124,58,237,0.25); border-color: var(--accent); color: var(--accent); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .ok { color: var(--success); }
+    .err { color: var(--error); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Опрос по служебным документам</h1>
+    <p class="meta" id="ngrokHint" hidden style="padding:0.5rem 0.65rem;border:1px dashed var(--border);border-radius:6px;">Если видите почти пустой экран: на бесплатном ngrok сначала нажмите кнопку <strong>Visit Site</strong>, затем обновите страницу при необходимости.</p>
+    <p class="meta" id="docsIntro">Вопросы соответствуют регламенту вашей должности в системе (цель, продукт, KPI; при наличии — папка должностных инструкций). Заполните пункты и при необходимости сохраните черновик. Чтобы перейти к следующему этапу оценки (кейс), нажмите «Завершить опрос».</p>
+    <p id="statusLine" class="meta"></p>
+    <div id="mount"><p class="meta">Загрузка…</p></div>
+  </div>
+  <script>
+    const API = '/api/skill-assessment/public/part1-docs-checklist';
+    const CASE_UI = '/api/skill-assessment/ui/part2-case';
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function render(data) {
+      const mount = document.getElementById('mount');
+      const statusLine = document.getElementById('statusLine');
+      const intro = document.getElementById('docsIntro');
+      if (!mount) return;
+      const done = data.completed;
+      if (intro) intro.hidden = !!done;
+      if (done) {
+        mount.innerHTML =
+          '<div class="block">' +
+          '<p class="meta ok" style="margin:0;">Опрос завершён. Перейдите ко второй части оценки.</p>' +
+          '<div class="row-actions"><a href="' + CASE_UI + '?token=' + encodeURIComponent(token) + '" class="primary" ' +
+          'style="display:inline-block;padding:0.45rem 0.85rem;border-radius:6px;border:1px solid var(--accent);text-decoration:none;">Перейти к кейсу</a></div>' +
+          '</div>';
+        if (statusLine) statusLine.textContent = '';
+        return;
+      }
+      const rows = data.questions.map(function(q) {
+        const val = data.answers[q.id] || '';
+        return '<div class="docs-q">' +
+          '<label>' + escapeHtml(q.text) + '</label>' +
+          (q.hint ? '<p class="meta" style="margin:0.25rem 0 0.5rem;">' + escapeHtml(q.hint) + '</p>' : '') +
+          '<select class="docs-q-sel" data-qid="' + escapeHtml(q.id) + '">' +
+          '<option value="">— выберите —</option>' +
+          '<option value="yes"' + (val === 'yes' ? ' selected' : '') + '>Да / полностью</option>' +
+          '<option value="no"' + (val === 'no' ? ' selected' : '') + '>Нет</option>' +
+          '<option value="partial"' + (val === 'partial' ? ' selected' : '') + '>Частично</option>' +
+          '</select></div>';
+      }).join('');
+      mount.innerHTML = '<div class="block">' + rows +
+        '<div class="row-actions">' +
+        '<button type="button" id="btnSave">Сохранить черновик</button>' +
+        '<button type="button" class="primary" id="btnDone">Завершить опрос</button>' +
+        '</div></div>';
+      if (statusLine) statusLine.textContent = '';
+      document.getElementById('btnSave').onclick = function() { save(false); };
+      document.getElementById('btnDone').onclick = function() { save(true); };
+    }
+
+    async function save(complete) {
+      const statusLine = document.getElementById('statusLine');
+      const answers = {};
+      document.querySelectorAll('select.docs-q-sel').forEach(function(sel) {
+        const id = sel.getAttribute('data-qid');
+        const v = sel.value;
+        if (id && v) answers[id] = v;
+      });
+      try {
+        const r = await fetch(API + '?token=' + encodeURIComponent(token), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ answers: answers, complete: complete })
+        });
+        const j = await r.json().catch(function() { return null; });
+        if (!r.ok) {
+          const msg = (j && j.detail) ? (typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)) : ('HTTP ' + r.status);
+          if (statusLine) statusLine.innerHTML = '<span class="err">' + escapeHtml(msg) + '</span>';
+          return;
+        }
+        if (statusLine) {
+          statusLine.innerHTML = complete
+            ? '<span class="ok">Готово. Опрос зафиксирован.</span>'
+            : '<span class="ok">Черновик сохранён.</span>';
+        }
+        if (complete && j && j.completed) {
+          window.location.href = CASE_UI + '?token=' + encodeURIComponent(token);
+          return;
+        }
+        render(j);
+      } catch (e) {
+        if (statusLine) statusLine.innerHTML = '<span class="err">' + escapeHtml(e.message || String(e)) + '</span>';
+      }
+    }
+
+    (function() {
+      const h = document.getElementById('ngrokHint');
+      if (h && /ngrok/i.test(window.location.hostname)) h.hidden = false;
+    })();
+
+    (async function() {
+      const mount = document.getElementById('mount');
+      if (!token || token.length < 16) {
+        if (mount) mount.innerHTML = '<p class="meta err">Нет или слишком короткий параметр <code>token</code> в адресе страницы. Откройте ссылку из письма или Telegram целиком.</p>';
+        return;
+      }
+      try {
+        const r = await fetch(API + '?token=' + encodeURIComponent(token));
+        const j = await r.json().catch(function() { return null; });
+        if (!r.ok) {
+          const msg = (j && j.detail) ? (typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)) : ('HTTP ' + r.status);
+          if (mount) mount.innerHTML = '<p class="meta err">' + escapeHtml(msg) + '</p>';
+          return;
+        }
+        render(j);
+      } catch (e) {
+        if (mount) mount.innerHTML = '<p class="meta err">' + escapeHtml(e.message || String(e)) + '</p>';
+      }
+    })();
+  </script>
+</body>
+</html>
