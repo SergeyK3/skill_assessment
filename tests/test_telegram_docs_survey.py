@@ -31,6 +31,15 @@ def test_build_keyboards_fit_callback_limit() -> None:
             assert len(btn["callback_data"].encode("utf-8")) <= 64
 
 
+def test_time_slots_half_hour_step_and_lunch_gap() -> None:
+    slots = tds.TIME_SLOTS
+    assert "09:30" in slots
+    assert "14:30" in slots
+    assert "17:30" in slots
+    assert "13:00" not in slots
+    assert slots.index("12:30") < slots.index("14:00")
+
+
 def test_three_workday_keyboard_fits_callback_limit() -> None:
     kb = tds.build_docs_survey_slot_keyboard_days("550e8400-e29b-41d4-a716-446655440000", 3)
     for row in kb["inline_keyboard"]:

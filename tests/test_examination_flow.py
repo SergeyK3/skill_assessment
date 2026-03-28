@@ -13,7 +13,7 @@ def test_examination_regulation_v1_flow() -> None:
         r = client.get("/api/skill-assessment/examination/scenarios/regulation_v1/questions")
         assert r.status_code == 200
         questions = r.json()
-        assert len(questions) == 4
+        assert len(questions) == 5
         assert questions[0]["seq"] == 0
 
         r = client.post(
@@ -26,7 +26,7 @@ def test_examination_regulation_v1_flow() -> None:
         tok = body["access_token"]
         assert tok and len(tok) >= 16
         assert body["phase"] == "consent"
-        assert body["question_count"] == 4
+        assert body["question_count"] == 5
 
         r = client.get(f"/api/skill-assessment/examination/sessions/by-access-token/{tok}")
         assert r.status_code == 200
@@ -57,21 +57,27 @@ def test_examination_regulation_v1_flow() -> None:
         assert r.status_code == 200
         assert r.json()["seq"] == 0
 
-        for i in range(4):
+        for i in range(5):
             r = client.post(
                 f"/api/skill-assessment/examination/sessions/{sid}/answer",
                 json={"transcript_text": f"Ответ на вопрос {i}"},
             )
             assert r.status_code == 200
-            if i < 3:
+            if i < 4:
                 assert r.json()["phase"] == "questions"
         assert r.json()["phase"] == "protocol"
 
         r = client.get(f"/api/skill-assessment/examination/sessions/{sid}/protocol")
         assert r.status_code == 200
         proto = r.json()
-        assert len(proto["items"]) == 4
+        assert len(proto["items"]) == 5
         assert "Ответ на вопрос 0" in proto["items"][0]["transcript_text"]
+        assert proto["items"][0]["score_4"] >= 1
+        assert proto["items"][0]["score_percent"] >= 50
+        assert proto.get("average_score_4") is not None
+        assert proto.get("employee_last_name") is not None
+        assert proto.get("evaluated_at") is not None
+        assert proto.get("evaluation_is_preliminary") is True
 
         r = client.post(f"/api/skill-assessment/examination/sessions/{sid}/complete")
         assert r.status_code == 200
@@ -81,6 +87,11 @@ def test_examination_regulation_v1_flow() -> None:
         r = client.get(f"/api/skill-assessment/examination/sessions?client_id=c1")
         assert r.status_code == 200
         assert any(x["id"] == sid for x in r.json())
+
+        r = client.delete(f"/api/skill-assessment/examination/sessions/{sid}")
+        assert r.status_code == 200
+        r = client.get(f"/api/skill-assessment/examination/sessions/{sid}")
+        assert r.status_code == 404
 
 
 def test_examination_unsupported_scenario() -> None:
