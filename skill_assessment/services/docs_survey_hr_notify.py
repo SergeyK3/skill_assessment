@@ -9,9 +9,9 @@ from datetime import datetime
 from typing import Literal
 
 import httpx
-from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
+from skill_assessment.env import PLUGIN_ENV_FILE, load_env_file
 from skill_assessment.infrastructure.db_models import AssessmentSessionRow
 from skill_assessment.integration.hr_core import employee_display_label, get_employee
 
@@ -21,10 +21,7 @@ Reason = Literal["declined", "timeout"]
 
 
 def _load_env() -> None:
-    from pathlib import Path
-
-    env = Path(__file__).resolve().parent.parent.parent / ".env"
-    load_dotenv(env, override=True)
+    load_env_file(PLUGIN_ENV_FILE, override=False)
 
 
 def send_telegram_text_to_chat(chat_id: str, text: str) -> bool:

@@ -10,14 +10,17 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from skill_assessment.infrastructure.db_models import AssessmentSessionRow
+from skill_assessment.domain.entities import AssessmentSessionStatus
+from skill_assessment.domain.examination_entities import ExaminationPhase, ExaminationSessionStatus as ExamSessionStatus
+from skill_assessment.infrastructure.db_models import AssessmentSessionRow, ExaminationSessionRow
 from skill_assessment.services.docs_survey_hr_notify import notify_hr_docs_survey_consent_issue
+from skill_assessment.services.part1_docs_checklist import telegram_part1_docs_checklist_message_line
 from skill_assessment.services.telegram_docs_survey import (
     DocsSurveyCallbackResult,
     _chat_owns_session,
@@ -87,6 +90,77 @@ def build_pd_consent_inline_keyboard(session_id: str) -> dict[str, Any]:
     }
 
 
+def _row_superseded_by_accepted_pd_elsewhere(db: Session, row: AssessmentSessionRow) -> bool:
+    """
+    Другая активная сессия того же сотрудника уже приняла ПДн по опросу — строка ``awaiting_first`` устарела
+    (дубликат чата / незакрытый статус), её нельзя использовать для перехвата сообщений.
+    """
+    cid = (row.client_id or "").strip()
+    eid = (row.employee_id or "").strip()
+    if not cid or not eid:
+        return False
+    other = db.scalar(
+        select(AssessmentSessionRow.id)
+        .where(
+            AssessmentSessionRow.client_id == cid,
+            AssessmentSessionRow.employee_id == eid,
+            AssessmentSessionRow.docs_survey_pd_consent_status == "accepted",
+            AssessmentSessionRow.id != row.id,
+            AssessmentSessionRow.status.notin_(
+                (AssessmentSessionStatus.COMPLETED.value, AssessmentSessionStatus.CANCELLED.value)
+            ),
+        )
+        .limit(1)
+    )
+    return other is not None
+
+
+def _get_active_examination_session_row(
+    db: Session, client_id: str, employee_id: str
+) -> ExaminationSessionRow | None:
+    """Существующая незавершённая сессия экзамена по регламентам (без создания новой)."""
+    cid, eid = (client_id or "").strip(), (employee_id or "").strip()
+    if not cid or not eid:
+        return None
+    return db.scalars(
+        select(ExaminationSessionRow)
+        .where(
+            ExaminationSessionRow.client_id == cid,
+            ExaminationSessionRow.employee_id == eid,
+            ExaminationSessionRow.status != ExamSessionStatus.COMPLETED.value,
+        )
+        .order_by(ExaminationSessionRow.created_at.desc())
+        .limit(1)
+    ).first()
+
+
+def _examination_blocks_pd_consent(db: Session, telegram_chat_id: str) -> bool:
+    """
+    Пользователь уже в сценарии экзамена (вопросы, вступление и т.д.) — не перехватывать ответы
+    обработчиком согласия ПДн для Part1 (иначе длинный транскрипт голоса даёт MSG_UNCLEAR).
+    """
+    from skill_assessment.services.telegram_examination import _resolve_binding
+
+    pair = _resolve_binding(db, str(telegram_chat_id).strip())
+    if pair is None:
+        return False
+    exam_row = _get_active_examination_session_row(db, pair[0], pair[1])
+    if exam_row is None:
+        return False
+    try:
+        ph = ExaminationPhase(exam_row.phase)
+    except ValueError:
+        return False
+    return ph in (
+        ExaminationPhase.CONSENT,
+        ExaminationPhase.INTRO,
+        ExaminationPhase.QUESTIONS,
+        ExaminationPhase.PROTOCOL,
+        ExaminationPhase.BLOCKED_CONSENT,
+        ExaminationPhase.BLOCKED_NO_REGULATION,
+    )
+
+
 def _find_awaiting_first_consent_session(db: Session, chat_id: str) -> AssessmentSessionRow | None:
     tid = str(chat_id).strip()
     rows = db.scalars(
@@ -100,7 +174,11 @@ def _find_awaiting_first_consent_session(db: Session, chat_id: str) -> Assessmen
     if not matching:
         return None
     matching.sort(key=lambda x: x.updated_at or x.created_at or datetime(1970, 1, 1), reverse=True)
-    return matching[0]
+    for candidate in matching:
+        if _row_superseded_by_accepted_pd_elsewhere(db, candidate):
+            continue
+        return candidate
+    return None
 
 
 def handle_pd_consent_callback(db: Session, chat_id: str, callback_data: str) -> DocsSurveyCallbackResult | None:
@@ -137,7 +215,7 @@ def handle_pd_consent_callback(db: Session, chat_id: str, callback_data: str) ->
     if st != "awaiting_first":
         return DocsSurveyCallbackResult("Согласие сейчас не ожидается.", [])
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     row.docs_survey_pd_consent_at = now
 
     if yn == "y":
@@ -145,10 +223,12 @@ def handle_pd_consent_callback(db: Session, chat_id: str, callback_data: str) ->
         db.commit()
         db.refresh(row)
         kb = build_docs_survey_slot_keyboard(row.id)
-        return DocsSurveyCallbackResult(
-            "Выберите дату",
-            [(MSG_SCHEDULING_AFTER_CONSENT, kb)],
-        )
+        outgoing: list[tuple[str, dict[str, Any] | None]] = []
+        line = telegram_part1_docs_checklist_message_line(db, session_id)
+        if line:
+            outgoing.append((line, None))
+        outgoing.append((MSG_SCHEDULING_AFTER_CONSENT, kb))
+        return DocsSurveyCallbackResult("Выберите дату", outgoing)
 
     row.docs_survey_pd_consent_status = "declined"
     db.commit()
@@ -173,6 +253,8 @@ def handle_docs_survey_pd_consent_message(
     Пустой список — передать управление другим сценариям (экзамен).
     Каждый элемент: (текст, reply_markup или None).
     """
+    if _examination_blocks_pd_consent(db, telegram_chat_id):
+        return []
     row = _find_awaiting_first_consent_session(db, telegram_chat_id)
     if row is None:
         return []
@@ -185,14 +267,19 @@ def handle_docs_survey_pd_consent_message(
     if yn is None:
         return [(MSG_UNCLEAR, None)]
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     row.docs_survey_pd_consent_at = now
     if yn:
         row.docs_survey_pd_consent_status = "accepted"
         db.commit()
         db.refresh(row)
         kb = build_docs_survey_slot_keyboard(row.id)
-        return [(MSG_SCHEDULING_AFTER_CONSENT, kb)]
+        out_msg: list[tuple[str, dict[str, Any] | None]] = []
+        line = telegram_part1_docs_checklist_message_line(db, row.id)
+        if line:
+            out_msg.append((line, None))
+        out_msg.append((MSG_SCHEDULING_AFTER_CONSENT, kb))
+        return out_msg
     row.docs_survey_pd_consent_status = "declined"
     db.commit()
     db.refresh(row)

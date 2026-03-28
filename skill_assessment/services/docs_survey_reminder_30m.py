@@ -1,38 +1,39 @@
 # route: (background) | file: skill_assessment/services/docs_survey_reminder_30m.py
-"""Напоминание в Telegram за ~30 минут до слота опроса по документам (готовность: Да/Нет)."""
+"""Напоминание в Telegram за N минут до слота опроса по документам (готовность: Да/Нет).
+
+``docs_survey_scheduled_at`` в БД — наивное **UTC** (слот в календаре задаётся в локальной зоне
+:envvar:`DOCS_SURVEY_LOCAL_TIMEZONE`, см. :mod:`skill_assessment.services.docs_survey_time`).
+"""
 
 from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime
-from pathlib import Path
+from datetime import datetime, timezone
 
 import httpx
-from dotenv import load_dotenv
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
 
+from skill_assessment.env import load_plugin_env
 from skill_assessment.infrastructure.db_models import AssessmentSessionRow
+from skill_assessment.services.docs_survey_time import reminder_minutes_before
 from skill_assessment.services.telegram_docs_survey_readiness import build_readiness_inline_keyboard
 
 _log = logging.getLogger(__name__)
-_ENV = Path(__file__).resolve().parent.parent.parent / ".env"
+
+
+def _as_utc_aware(dt: datetime) -> datetime:
+    """SQLite отдаёт naive datetime; сравниваем с ``now`` в UTC (aware)."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 def _minutes_before_scheduled(scheduled_at: datetime, now: datetime) -> float:
-    return (scheduled_at - now).total_seconds() / 60.0
-
-
-def _reminder_target_minutes() -> int:
-    load_dotenv(_ENV, override=True)
-    raw = os.getenv("DOCS_SURVEY_REMINDER_MINUTES_BEFORE", "30").strip()
-    try:
-        return max(1, min(120, int(raw)))
-    except ValueError:
-        return 30
+    return (_as_utc_aware(scheduled_at) - _as_utc_aware(now)).total_seconds() / 60.0
 
 
 def _in_reminder_window(minutes_left: float, target: int) -> bool:
@@ -40,9 +41,26 @@ def _in_reminder_window(minutes_left: float, target: int) -> bool:
     return (target - 1) <= minutes_left <= (target + 1)
 
 
+def _should_send_reminder_now(minutes_left: float, target: int) -> bool:
+    """
+    Отправить, если попали в узкое окно **или** догоняем: API/процесс не работали в нужную минуту,
+    но до слота ещё от 1 минуты до (target−2) минут (не раньше чем за target+1 мин до слота).
+    """
+    if minutes_left <= 0:
+        return False
+    if minutes_left > float(target) + 1.0:
+        return False
+    if _in_reminder_window(minutes_left, target):
+        return True
+    if target <= 2:
+        return False
+    # Догон: пропустили окно [target−1, target+1], но ещё не «последняя минута» перед слотом
+    return 1.0 <= minutes_left < float(target) - 1.0
+
+
 def send_reminder_30m_for_session(db: Session, row: AssessmentSessionRow, minutes_label: int) -> bool:
     """Отправляет напоминание один раз; помечает docs_survey_reminder_30m_sent_at при успехе."""
-    load_dotenv(_ENV, override=True)
+    load_plugin_env(override=False)
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not token or len(token) < 10:
         _log.warning("docs_survey_reminder_30m: нет TELEGRAM_BOT_TOKEN")
@@ -77,7 +95,7 @@ def send_reminder_30m_for_session(db: Session, row: AssessmentSessionRow, minute
         )
         data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
         if r.is_success and isinstance(data, dict) and data.get("ok"):
-            row.docs_survey_reminder_30m_sent_at = datetime.utcnow()
+            row.docs_survey_reminder_30m_sent_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(row)
             _log.info("docs_survey_reminder_30m: отправлено сессия %s…", short)
@@ -93,8 +111,8 @@ def process_docs_survey_30m_reminders_once() -> int:
     """
     Планировщик: сессии с выбранным слотом, согласием, без отправленного напоминания.
     """
-    target = _reminder_target_minutes()
-    now = datetime.utcnow()
+    target = reminder_minutes_before()
+    now = datetime.now(timezone.utc)
     db = SessionLocal()
     n = 0
     try:
@@ -111,9 +129,7 @@ def process_docs_survey_30m_reminders_once() -> int:
             if sched is None:
                 continue
             mins = _minutes_before_scheduled(sched, now)
-            if mins <= 0:
-                continue
-            if not _in_reminder_window(mins, target):
+            if not _should_send_reminder_now(mins, target):
                 continue
             if send_reminder_30m_for_session(db, row, target):
                 n += 1

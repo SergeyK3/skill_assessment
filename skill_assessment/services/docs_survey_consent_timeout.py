@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from app.db import SessionLocal
 
 from skill_assessment.infrastructure.db_models import AssessmentSessionRow
+from skill_assessment.services.examination_answer_timeout import process_examination_answer_timeouts_once
 from skill_assessment.services.docs_survey_hr_notify import notify_hr_docs_survey_consent_issue
 from skill_assessment.services.docs_survey_reminder_30m import process_docs_survey_30m_reminders_once
 
@@ -25,7 +26,7 @@ def process_consent_timeouts_once() -> int:
     Помечает сессии с истёкшим ожиданием и уведомляет HR один раз.
     Возвращает число обработанных сессий.
     """
-    cutoff = datetime.utcnow() - timedelta(minutes=CONSENT_WAIT_MINUTES)
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=CONSENT_WAIT_MINUTES)
     db = SessionLocal()
     n = 0
     try:
@@ -39,7 +40,7 @@ def process_consent_timeouts_once() -> int:
         ).all()
         for row in rows:
             sent = notify_hr_docs_survey_consent_issue(db, row, "timeout")
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             row.docs_survey_pd_consent_status = "timed_out"
             row.docs_survey_pd_consent_at = now
             if sent:
@@ -61,12 +62,13 @@ def process_consent_timeouts_once() -> int:
 
 
 async def run_docs_survey_consent_timeout_loop() -> None:
-    """Фоновый цикл: раз в POLL_INTERVAL_SEC проверка молчания."""
+    """Фоновый цикл: таймаут согласия ПДн, таймаут между ответами экзамена и напоминания по слоту."""
     while True:
         try:
-            await asyncio.sleep(POLL_INTERVAL_SEC)
             await asyncio.to_thread(process_consent_timeouts_once)
+            await asyncio.to_thread(process_examination_answer_timeouts_once)
             await asyncio.to_thread(process_docs_survey_30m_reminders_once)
+            await asyncio.sleep(POLL_INTERVAL_SEC)
         except asyncio.CancelledError:
             raise
         except Exception:

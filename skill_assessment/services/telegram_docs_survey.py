@@ -11,7 +11,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, time as dt_time, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -19,12 +19,28 @@ from sqlalchemy.orm import Session
 from skill_assessment.infrastructure.db_models import AssessmentSessionRow
 from skill_assessment.integration.hr_core import get_employee
 from skill_assessment.services import examination_service as examination_svc
+from skill_assessment.services.docs_survey_time import local_slot_to_utc_naive
 
 _log = logging.getLogger(__name__)
 
 PREFIX_DAY = "dsd"
 PREFIX_TIME = "dst"
-TIME_SLOTS = ("09:00", "10:00", "11:00", "12:00", "14:00", "15:00", "16:00", "17:00")
+
+
+def _time_slots_half_hour_workday() -> tuple[str, ...]:
+    """Рабочий день: с 9:00 до 12:30 и с 14:00 до 17:30 с шагом 30 минут (перерыв 13:00–13:30 как раньше)."""
+    slots: list[str] = []
+    for h in range(9, 13):
+        for m in (0, 30):
+            slots.append(f"{h:02d}:{m:02d}")
+    for h in range(14, 17):
+        for m in (0, 30):
+            slots.append(f"{h:02d}:{m:02d}")
+    slots.extend(("17:00", "17:30"))
+    return tuple(slots)
+
+
+TIME_SLOTS = _time_slots_half_hour_workday()
 
 
 @dataclass(frozen=True)
@@ -169,7 +185,8 @@ def handle_docs_survey_callback(
         hh = hhmm[:2]
         mm = hhmm[2:]
         human_dt = f"{d.strftime('%d.%m.%Y')} {hh}:{mm}"
-        sched = datetime.combine(d, dt_time(int(hh), int(mm)))
+        # Локальное время в зоне DOCS_SURVEY_LOCAL_TIMEZONE (по умолчанию Europe/Moscow) → UTC в БД
+        sched = local_slot_to_utc_naive(d, int(hh), int(mm))
         if srow is not None:
             srow.docs_survey_scheduled_at = sched
             srow.docs_survey_reminder_30m_sent_at = None

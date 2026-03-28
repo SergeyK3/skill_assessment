@@ -1,6 +1,9 @@
 # route: (telegram) | file: skill_assessment/services/telegram_docs_survey_exam_gate.py
 """
-После напоминания «готов/не готов» (Да): сообщение «время пришло» → текстовый ответ → экзамен по регламентам.
+Если до экзамена ещё ждали текстовое «да» (старый поток): ответ обрабатывается здесь.
+
+После inline «Да» в напоминании экзамен запускается сразу — см.
+:func:`start_examination_immediately_for_assessment_session`.
 
 Если пользователь отвечает «нет» на ворота — предлагаем перенос слота (3 рабочих дня), как после «не готов» в напоминании.
 """
@@ -11,12 +14,13 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from skill_assessment.domain.examination_entities import ExaminationPhase
 from skill_assessment.infrastructure.db_models import AssessmentSessionRow
-from skill_assessment.schemas.examination_api import ExaminationIntroDoneBody
+from skill_assessment.schemas.examination_api import ExaminationConsentBody, ExaminationIntroDoneBody
 from skill_assessment.services import examination_service as ex
 from skill_assessment.services.telegram_docs_survey import (
     _telegram_chat_ids_equal,
@@ -48,11 +52,83 @@ def _find_gate_session(db: Session, telegram_chat_id: str) -> AssessmentSessionR
     return matching[0]
 
 
+def start_examination_immediately_for_assessment_session(
+    db: Session, assessment_row: AssessmentSessionRow
+) -> list[tuple[str, dict[str, Any] | None]]:
+    """
+    После «Да» в напоминании о готовности — без ожидания времени слота и без второго текстового подтверждения.
+    """
+    if not assessment_row.employee_id:
+        return [("Не удалось сопоставить сотрудника с экзаменом. Обратитесь в HR.", None)]
+
+    assessment_row.docs_survey_exam_gate_awaiting = False
+    db.commit()
+    db.refresh(assessment_row)
+
+    try:
+        ex_row = ex.get_or_create_active_examination_session(db, assessment_row.client_id, assessment_row.employee_id)
+    except HTTPException as e:
+        return [(f"Не удалось открыть сессию экзамена: {e.detail}", None)]
+
+    phase = ExaminationPhase(ex_row.phase)
+
+    if phase == ExaminationPhase.BLOCKED_NO_REGULATION:
+        return [
+            (
+                "Экзамен приостановлен: для вашей должности и подразделения не найден регламент с KPI в системе. "
+                "Отдел кадров получил уведомление. После загрузки регламента напишите сюда снова.",
+                None,
+            )
+        ]
+    if phase == ExaminationPhase.BLOCKED_CONSENT:
+        return [
+            (
+                "Согласие на экзамен заблокировано. Обратитесь в HR, затем снова напишите в этот чат.",
+                None,
+            )
+        ]
+    if phase == ExaminationPhase.INTERRUPTED_TIMEOUT:
+        return [
+            (
+                "Экзамен прерван по таймауту: между ответами прошло более 5 минут. "
+                "Отдел кадров получил уведомление. Для повторной проверки потребуется новое назначение.",
+                None,
+            )
+        ]
+
+    if phase == ExaminationPhase.CONSENT:
+        out = ex.post_consent(db, ex_row.id, ExaminationConsentBody(accepted=True))
+        if ExaminationPhase(out.phase) == ExaminationPhase.BLOCKED_CONSENT:
+            return [("Отказ зафиксирован. Обратитесь в отдел кадров для повторного предложения согласия.", None)]
+        ex.post_intro_done(db, ex_row.id, ExaminationIntroDoneBody())
+    elif phase == ExaminationPhase.INTRO:
+        ex.post_intro_done(db, ex_row.id, ExaminationIntroDoneBody())
+    elif phase == ExaminationPhase.QUESTIONS:
+        pass
+    elif phase == ExaminationPhase.PROTOCOL:
+        return [("Сейчас отображается протокол экзамена. Завершите его по подсказкам бота.", None)]
+    elif phase == ExaminationPhase.COMPLETED:
+        return [("Экзамен по регламентам уже завершён. При новом назначении откроется новая сессия.", None)]
+    else:
+        return [("Неизвестная фаза экзамена. Напишите в этот чат.", None)]
+
+    q = ex.get_current_question(db, ex_row.id)
+    if q:
+        return [
+            (
+                f"Вопрос {q.seq + 1}:\n\n{q.text}\n\n"
+                "Ответ — одним сообщением: текстом или голосом (будет записан в протокол как транскрипт).",
+                None,
+            )
+        ]
+    return [("Нет вопросов в сценарии (ошибка конфигурации).", None)]
+
+
 def handle_exam_gate_message(
     db: Session, telegram_chat_id: str, text: str | None, is_start_command: bool
 ) -> list[tuple[str, dict[str, Any] | None]]:
     """
-    Пустой список — передать дальше (согласие ПДн, экзамен).
+    Пустой список — передать дальше (сценарий опроса Part1 или экзамен).
     Иначе список (текст, reply_markup) для отправки.
     """
     row = _find_gate_session(db, telegram_chat_id)
@@ -60,8 +136,12 @@ def handle_exam_gate_message(
         return []
 
     msg = (text or "").strip()
-    if not msg or is_start_command:
+    if not msg:
         return [(GATE_REPEAT, None)]
+
+    if is_start_command:
+        # Не перехватываем /start: дальше handle_telegram_message (короткий текст согласия на этап, если ПДн по опросу уже принят).
+        return []
 
     yn = _is_yes(msg)
     if yn is None:
@@ -101,18 +181,26 @@ def handle_exam_gate_message(
     phase = ExaminationPhase(ex_row.phase)
 
     if phase == ExaminationPhase.CONSENT:
-        return [
-            (
-                "Сначала примите согласие на экзамен по регламентам: отправьте /start и ответьте «да» на запрос "
-                "о персональных данных. После перехода к экзамену снова напишите здесь «да».",
-                None,
-            )
-        ]
+        # Реальное согласие и переход INTRO — в handle_telegram_message; иначе «да» только зацикливало текст-инструкцию.
+        from skill_assessment.services.telegram_examination import handle_telegram_message
+
+        submsgs = handle_telegram_message(db, telegram_chat_id, text, False)
+        row.docs_survey_exam_gate_awaiting = False
+        db.commit()
+        return [(m, None) for m in submsgs if m]
 
     if phase == ExaminationPhase.BLOCKED_CONSENT:
         return [
             (
-                "Согласие на экзамен заблокировано. Обратитесь в HR, затем снова /start.",
+                "Согласие на экзамен заблокировано. Обратитесь в HR, затем снова напишите в этот чат.",
+                None,
+            )
+        ]
+    if phase == ExaminationPhase.INTERRUPTED_TIMEOUT:
+        return [
+            (
+                "Экзамен прерван по таймауту: между ответами прошло более 5 минут. "
+                "Отдел кадров получил уведомление. Для повторной проверки потребуется новое назначение.",
                 None,
             )
         ]
@@ -139,27 +227,18 @@ def handle_exam_gate_message(
     if phase == ExaminationPhase.QUESTIONS:
         row.docs_survey_exam_gate_awaiting = False
         db.commit()
-        qcur = ex.get_current_question(db, ex_row.id)
-        if qcur:
-            return [
-                (
-                    f"Продолжаем экзамен.\n\nВопрос {qcur.seq + 1}:\n\n{qcur.text}\n\n"
-                    "Отправьте ответ одним сообщением.",
-                    None,
-                )
-            ]
-        return [("Экзамен в неожиданном состоянии. Напишите /start.", None)]
+        return []
 
     if phase == ExaminationPhase.PROTOCOL:
         row.docs_survey_exam_gate_awaiting = False
         db.commit()
-        return [("Сейчас отображается протокол экзамена. Завершите его по подсказкам бота.", None)]
+        return []
 
     if phase == ExaminationPhase.COMPLETED:
         row.docs_survey_exam_gate_awaiting = False
         db.commit()
-        return [("Экзамен по регламентам уже завершён. При новом назначении откроется новая сессия.", None)]
+        return []
 
     row.docs_survey_exam_gate_awaiting = False
     db.commit()
-    return [("Неизвестная фаза экзамена. Напишите /start.", None)]
+    return []

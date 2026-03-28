@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from skill_assessment.domain.entities import AssessmentSessionStatus, Part1TurnRole, SessionPhase
 from skill_assessment.infrastructure.db_models import AssessmentSessionRow, SessionPart1TurnRow
 from skill_assessment.schemas.api import Part1TurnOut, Part1TurnsAppend
+from skill_assessment.services.llm_post_stt_blacklist import assert_user_text_allowed_after_stt
 
 
 def turn_row_to_out(row: SessionPart1TurnRow) -> Part1TurnOut:
@@ -55,6 +56,8 @@ def append_part1_turns(db: Session, session_id: str, body: Part1TurnsAppend) -> 
         txt = t.text.strip()
         if not txt:
             raise HTTPException(status_code=400, detail="part1_empty_turn")
+        if t.role == Part1TurnRole.USER:
+            assert_user_text_allowed_after_stt(db, txt)
         tr = SessionPart1TurnRow(
             id=str(uuid.uuid4()),
             session_id=session_id,

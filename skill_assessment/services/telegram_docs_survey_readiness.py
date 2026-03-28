@@ -5,7 +5,7 @@
 Callback: ``dsr|y|session_id`` / ``dsr|n|session_id``.
 
 - **Нет** → выбор из 3 ближайших рабочих дней и времени (перенос слота).
-- **Да** → моделируется «время пришло»; далее текстовый сценарий в :mod:`telegram_docs_survey_exam_gate`.
+- **Да** → сразу начинается экзамен по регламентам (без ожидания времени слота и без второго «да» в чате).
 """
 
 from __future__ import annotations
@@ -21,16 +21,13 @@ from skill_assessment.services.telegram_docs_survey import (
     _chat_owns_session,
     build_docs_survey_slot_keyboard_days,
 )
+from skill_assessment.services.telegram_docs_survey_exam_gate import (
+    start_examination_immediately_for_assessment_session,
+)
 
 _log = logging.getLogger(__name__)
 
 PREFIX_READINESS = "dsr"
-
-MSG_TIME_ARRIVED_GATE = (
-    "Время назначенного опроса по документам. Считаем, что время пришло.\n\n"
-    "Готовы ответить на вопросы по внутренним регламентам?\n\n"
-    "Напишите «да» (готов) или «нет» (пока не готов)."
-)
 
 
 def build_readiness_inline_keyboard(session_id: str) -> dict[str, Any]:
@@ -98,8 +95,8 @@ def handle_docs_survey_readiness_callback(
         )
 
     row.docs_survey_readiness_answer = "ready"
-    row.docs_survey_exam_gate_awaiting = True
     db.commit()
     db.refresh(row)
-    _log.info("docs_survey_readiness: готов + ворота экзамена session=%s", session_id[:8])
-    return DocsSurveyCallbackResult("Принято", [(MSG_TIME_ARRIVED_GATE, None)])
+    _log.info("docs_survey_readiness: готов — сразу экзамен session=%s", session_id[:8])
+    msgs = start_examination_immediately_for_assessment_session(db, row)
+    return DocsSurveyCallbackResult("Начинаем опрос", msgs)

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from skill_assessment.infrastructure.db_models import ExaminationQuestionRow
@@ -27,30 +26,39 @@ REGULATION_V1_QUESTION_TEXTS: list[tuple[int, str]] = [
     ),
     (
         1,
-        "Как вы действуете при выявлении несоответствия требованиям охраны труда на рабочем месте?",
+        "Какие нормативные требования и внутренние регламенты в зоне вашей профессиональной ответственности "
+        "(по должности и подразделению) вы обязаны учитывать в работе? Приведите пример.",
     ),
     (
         2,
-        "Опишите один ключевой KPI вашей должности и как вы его отслеживаете.",
+        "Опишите один ключевой KPI (показатель эффективности), заданный для вашей должности или подразделения "
+        "в плане целей, и как вы отслеживаете его достижение (источники данных, периодичность).",
     ),
     (
         3,
         "Где вы находите актуальные версии нормативных документов организации и как проверяете, что версия действующая?",
     ),
+    (
+        4,
+        "Каково назначение или цель вашей должности в организации и подразделении? Сформулируйте своими словами.",
+    ),
 ]
 
 
 def ensure_examination_questions(db: Session) -> None:
-    if db.scalar(
-        select(ExaminationQuestionRow.id).where(ExaminationQuestionRow.scenario_id == SCENARIO_REGULATION_V1).limit(1)
-    ) is not None:
-        return
+    """Создать недостающие строки и обновить тексты (в т.ч. добавить 5-й вопрос к старым БД с четырьмя)."""
     for seq, text in REGULATION_V1_QUESTION_TEXTS:
-        db.add(
-            ExaminationQuestionRow(
-                id=_qid(seq),
-                scenario_id=SCENARIO_REGULATION_V1,
-                seq=seq,
-                text=text,
+        qid = _qid(seq)
+        row = db.get(ExaminationQuestionRow, qid)
+        if row is None:
+            db.add(
+                ExaminationQuestionRow(
+                    id=qid,
+                    scenario_id=SCENARIO_REGULATION_V1,
+                    seq=seq,
+                    text=text,
+                )
             )
-        )
+        elif row.text.strip() != text.strip():
+            row.text = text
+    db.commit()
