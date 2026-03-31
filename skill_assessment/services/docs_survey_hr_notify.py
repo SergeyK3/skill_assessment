@@ -85,6 +85,28 @@ def notify_hr_docs_survey_consent_issue(
             "Сообщение сформировано автоматически."
         )
 
+    notify_chat = (row.docs_survey_notify_chat_id or "").strip()
+    suppress_same_chat = (os.getenv("TELEGRAM_DOCS_SURVEY_SUPPRESS_HR_NOTIFY_TO_EMPLOYEE_CHAT") or "1").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    if suppress_same_chat and notify_chat and hr_chat and notify_chat == hr_chat:
+        _log.info(
+            "docs_survey_hr: suppress notify to same chat_id=%s (session %s…, reason=%s)",
+            hr_chat,
+            short,
+            reason,
+        )
+        return False
+    if notify_chat:
+        body += (
+            f"\n\nТехнически: запрос согласия отправлялся в Telegram chat_id={notify_chat}. "
+            "Если это не личный чат сотрудника с ботом — проверьте поле Telegram у сотрудника в HR "
+            "или привязку POST /api/skill-assessment/examination/telegram/bindings; иначе сотрудник не видел кнопки «Да»/«Нет»."
+        )
+
     ok = send_telegram_text_to_chat(hr_chat, body)
     if ok:
         _log.info("docs_survey_hr: уведомление отправлено (%s), сессия %s…", reason, short)
