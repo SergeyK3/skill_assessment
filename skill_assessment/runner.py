@@ -277,6 +277,22 @@ def _ensure_manager_assessment_columns(engine) -> None:
     _log.info("skill_assessment: ensured manager assessment columns (migration)")
 
 
+def _ensure_manager_overall_comment_column(engine) -> None:
+    """SQLite: общий комментарий руководителя для Part 3 (без Alembic)."""
+    from sqlalchemy import inspect, text
+
+    try:
+        insp = inspect(engine)
+        cols = [c["name"] for c in insp.get_columns("sa_assessment_sessions")]
+    except Exception:
+        return
+    if "manager_overall_comment" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE sa_assessment_sessions ADD COLUMN manager_overall_comment TEXT"))
+    _log.info("skill_assessment: added column sa_assessment_sessions.manager_overall_comment (migration)")
+
+
 def _ensure_examination_access_token_column(engine) -> None:
     """SQLite: колонка access_token для персональных ссылок на экзамен (без Alembic)."""
     from sqlalchemy import inspect, or_, select, text
@@ -352,6 +368,86 @@ def _ensure_examination_question_scenario_id_column(engine) -> None:
     _log.info("skill_assessment: added column sa_examination_sessions.question_scenario_id (migration)")
 
 
+def _ensure_sa_catalog_version_lineage_columns(engine) -> None:
+    """Связь версии каталога с регламентом + цепочка замен + дата публикации."""
+    from sqlalchemy import inspect, text
+
+    def add_cols(table: str, specs: list[tuple[str, str]]) -> None:
+        try:
+            insp = inspect(engine)
+            cols = {c["name"] for c in insp.get_columns(table)}
+        except Exception:
+            return
+        alters = [sql for name, sql in specs if name not in cols]
+        if not alters:
+            return
+        with engine.begin() as conn:
+            for sql in alters:
+                conn.execute(text(sql))
+        _log.info("skill_assessment: added catalog lineage columns to %s", table)
+
+    add_cols(
+        "sa_competency_catalog_versions",
+        [
+            ("source_regulation_code", "ALTER TABLE sa_competency_catalog_versions ADD COLUMN source_regulation_code VARCHAR(64) NULL"),
+            (
+                "source_regulation_version_no",
+                "ALTER TABLE sa_competency_catalog_versions ADD COLUMN source_regulation_version_no VARCHAR(16) NULL",
+            ),
+            (
+                "replaces_version_id",
+                "ALTER TABLE sa_competency_catalog_versions ADD COLUMN replaces_version_id VARCHAR(36) NULL REFERENCES sa_competency_catalog_versions(id)",
+            ),
+            ("published_at", "ALTER TABLE sa_competency_catalog_versions ADD COLUMN published_at DATETIME NULL"),
+        ],
+    )
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_sa_ccv_source_regulation_code "
+                    "ON sa_competency_catalog_versions (source_regulation_code)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_sa_ccv_replaces_version_id "
+                    "ON sa_competency_catalog_versions (replaces_version_id)"
+                )
+            )
+    except Exception:
+        pass
+
+    add_cols(
+        "sa_kpi_catalog_versions",
+        [
+            ("source_regulation_code", "ALTER TABLE sa_kpi_catalog_versions ADD COLUMN source_regulation_code VARCHAR(64) NULL"),
+            ("source_regulation_version_no", "ALTER TABLE sa_kpi_catalog_versions ADD COLUMN source_regulation_version_no VARCHAR(16) NULL"),
+            (
+                "replaces_version_id",
+                "ALTER TABLE sa_kpi_catalog_versions ADD COLUMN replaces_version_id VARCHAR(36) NULL REFERENCES sa_kpi_catalog_versions(id)",
+            ),
+            ("published_at", "ALTER TABLE sa_kpi_catalog_versions ADD COLUMN published_at DATETIME NULL"),
+        ],
+    )
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_sa_kcv_source_regulation_code "
+                    "ON sa_kpi_catalog_versions (source_regulation_code)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_sa_kcv_replaces_version_id "
+                    "ON sa_kpi_catalog_versions (replaces_version_id)"
+                )
+            )
+    except Exception:
+        pass
+
+
 def apply_skill_assessment_database_migrations() -> None:
     """
     ``create_all`` + ALTER для существующих SQLite БД (без Alembic).
@@ -362,6 +458,7 @@ def apply_skill_assessment_database_migrations() -> None:
     from app.db import Base, engine
 
     Base.metadata.create_all(bind=engine)
+    _ensure_sa_catalog_version_lineage_columns(engine)
     _ensure_sa_session_phase_column(engine)
     _ensure_docs_survey_notify_chat_column(engine)
     _ensure_docs_survey_pd_consent_columns(engine)
@@ -371,6 +468,7 @@ def apply_skill_assessment_database_migrations() -> None:
     _ensure_part1_docs_access_token_column(engine)
     _ensure_part2_cases_column(engine)
     _ensure_manager_assessment_columns(engine)
+    _ensure_manager_overall_comment_column(engine)
     _ensure_examination_question_scenario_id_column(engine)
     _ensure_examination_access_token_column(engine)
 
@@ -394,7 +492,7 @@ def _registered_paths(fastapi_app: FastAPI) -> set[str]:
 
 
 def _register_global_ui_fallbacks(fastapi_app: FastAPI) -> None:
-    """Если в загруженном ядре нет GET /global/… (старый клон), отдаём HTML из static ядра по TYPICAL_INFRA_ROOT."""
+    """Если в загруженном ядре нет GET /global/… или /regulations… (старый клон), отдаём HTML из static ядра по TYPICAL_INFRA_ROOT."""
     root = _discover_typical_infra_root_dir()
     if root is None:
         _log.warning(
@@ -415,6 +513,9 @@ def _register_global_ui_fallbacks(fastapi_app: FastAPI) -> None:
         ("/global/kpi", static_dir / "global" / "kpi-templates.html", "global_kpi_alias"),
         ("/global/matrix-skills", static_dir / "global" / "matrix-skills.html", "global_matrix_skills"),
         ("/global/matrix-kpi", static_dir / "global" / "matrix-kpi.html", "global_matrix_kpi"),
+        # Реестр регламентов: в старых клонах ядра не было GET /regulations — отдаём HTML с диска по TYPICAL_INFRA_ROOT.
+        ("/regulations", static_dir / "regulations" / "index.html", "regulations_page"),
+        ("/regulations/", static_dir / "regulations" / "index.html", "regulations_page_slash"),
     ]
     have = _registered_paths(fastapi_app)
     for url_path, file_path, detail_key in pairs:
@@ -451,6 +552,11 @@ def _redirect_skill_assessment_ui(dest: str, request: Request) -> RedirectRespon
     q = request.url.query
     url = dest + ("?" + q if q else "")
     return RedirectResponse(url=url, status_code=302)
+
+
+def _api_skill_assessment_root_to_landing(request: Request) -> RedirectResponse:
+    """GET /api/skill-assessment и /api/skill-assessment/ → landing (без middleware на все запросы)."""
+    return _redirect_skill_assessment_ui("/api/skill-assessment/landing", request)
 
 
 def skill_assessment_page() -> FileResponse:
@@ -515,6 +621,16 @@ def configure_skill_assessment_plugin(app: FastAPI) -> None:
         include_in_schema=False,
     )
 
+    have = _registered_paths(app)
+    for apath in ("/api/skill-assessment", "/api/skill-assessment/"):
+        if apath not in have:
+            app.add_api_route(
+                apath,
+                _api_skill_assessment_root_to_landing,
+                methods=["GET", "HEAD"],
+                include_in_schema=False,
+            )
+
 
 def run_plugin_startup() -> None:
     """Вызывается из lifespan ядра (app.main). Гарантируем таблицы и демо-таксономию."""
@@ -522,7 +638,7 @@ def run_plugin_startup() -> None:
     load_plugin_env(override=False)
 
     _log.info(
-        "skill_assessment runner: плагин активен — GET /skill-assessment → /api/skill-assessment/landing, "
+        "skill_assessment runner: плагин активен — GET /skill-assessment и GET /api/skill-assessment/ → landing, "
         "рабочий UI: GET /api/skill-assessment/workspace (GET /ui → 307 на workspace), health: GET /api/skill-assessment/health"
     )
     _log.info(
@@ -541,29 +657,39 @@ def run_plugin_startup() -> None:
     finally:
         db.close()
 
-    try:
-        from skill_assessment.services.docs_survey_consent_timeout import start_consent_timeout_background_task
-
-        start_consent_timeout_background_task()
-        _log.info("skill_assessment: фоновая проверка таймаутов (ПДн + ответы экзамена) запущена.")
-    except Exception:
-        _log.exception("skill_assessment: не удалось запустить проверку таймаута согласия ПДн")
-
     raw_poll = os.getenv("TELEGRAM_ENABLE_POLLING", "")
     poll = raw_poll.strip().lower() in ("1", "true", "yes")
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    raw_embed = os.getenv("TELEGRAM_POLLING_RUN_IN_UVICORN", "1")
+    # По умолчанию 0: при uvicorn --reload второй воркер + getUpdates в первом даёт 409 у Telegram.
+    raw_embed = os.getenv("TELEGRAM_POLLING_RUN_IN_UVICORN", "0")
     run_poll_in_uvicorn = raw_embed.strip().lower() in ("1", "true", "yes")
+    # Таймаутный цикл (ПДн + таймаут ответа экзамена + reminder слота):
+    # когда polling вынесен в telegram_worker (run_in_uvicorn=0), цикл должен работать ТОЛЬКО в worker,
+    # иначе получаются дубли уведомлений.
+    run_timeout_loop_in_uvicorn = not (poll and token and not run_poll_in_uvicorn)
     _log.info(
         "skill_assessment: .env=%s TELEGRAM_ENABLE_POLLING=%r → polling=%s, token_set=%s, "
-        "TELEGRAM_POLLING_RUN_IN_UVICORN=%r → embedded=%s",
+        "TELEGRAM_POLLING_RUN_IN_UVICORN=%r → embedded=%s, timeout_loop_in_uvicorn=%s",
         _ENV_FILE,
         raw_poll,
         poll,
         bool(token),
         raw_embed,
         run_poll_in_uvicorn,
+        run_timeout_loop_in_uvicorn,
     )
+    if run_timeout_loop_in_uvicorn:
+        try:
+            from skill_assessment.services.docs_survey_consent_timeout import start_consent_timeout_background_task
+
+            start_consent_timeout_background_task()
+            _log.info("skill_assessment: фоновая проверка таймаутов (ПДн + ответы экзамена) запущена.")
+        except Exception:
+            _log.exception("skill_assessment: не удалось запустить проверку таймаута согласия ПДн")
+    else:
+        _log.info(
+            "skill_assessment: таймаутный цикл в uvicorn отключён (работает в telegram_worker), чтобы избежать дублей."
+        )
     if poll and token and run_poll_in_uvicorn:
         from skill_assessment.integration.telegram_poller import start_background_polling
         import skill_assessment.telegram_runtime as tg_rt
