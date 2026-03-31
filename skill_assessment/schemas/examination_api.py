@@ -117,6 +117,15 @@ class ExaminationProtocolOut(BaseModel):
     scoring_note: str = Field(
         default="Оценка по каждому ответу — автоматическая (эвристика MVP), не заменяет экспертную проверку.",
     )
+    #: Связанная сквозная сессия общей оценки навыков (если найдена для той же пары client/employee).
+    related_assessment_session_id: str | None = None
+    related_assessment_phase: str | None = None
+    related_assessment_status: str | None = None
+    #: Публичная ссылка на общий протокол оценки; в нём позже появляются Part 2 и Part 3.
+    related_report_url: str | None = None
+    related_report_path: str | None = None
+    #: Короткая сводка по этапу кейсов в общей сессии.
+    part2_summary: str | None = None
 
 
 class TelegramBindingCreate(BaseModel):

@@ -136,7 +136,7 @@ def test_examination_interrupts_when_pause_between_answers_exceeds_five_minutes(
         db.close()
 
 
-def test_telegram_returns_formatted_protocol_after_last_answer() -> None:
+def test_telegram_autocompletes_and_hides_detailed_protocol_after_last_answer() -> None:
     from skill_assessment.bootstrap import ensure_typical_infrastructure_on_path
 
     ensure_typical_infrastructure_on_path()
@@ -167,10 +167,86 @@ def test_telegram_returns_formatted_protocol_after_last_answer() -> None:
         for i in range(5):
             last = handle_telegram_message(db, chat, f"Ответ {i + 1}", False)
         assert last
-        assert "Протокол опроса по внутренним регламентам" in last[0]
-        assert any("Итоговая (интегральная) оценка по экзамену" in x for x in last)
-        assert any("Вопрос 1" in x for x in last)
-        assert any("Оценка по ответу:" in x for x in last)
-        assert last[-1].startswith("Чтобы завершить экзамен")
+        assert any("Опрос по регламентам завершён" in x for x in last)
+        assert any("кейс" in x.lower() for x in last)
+        assert not any("Оценка по ответу:" in x for x in last)
+        assert not any("Вопрос 1" in x for x in last)
     finally:
         db.close()
+
+
+def test_get_or_create_active_examination_session_filters_only_active_statuses(monkeypatch) -> None:
+    from skill_assessment.services import examination_service as ex
+
+    captured = {"sql": ""}
+
+    class _FakeScalarResult:
+        def first(self):
+            return object()
+
+    class _FakeDb:
+        def scalars(self, query):
+            captured["sql"] = str(query.compile(compile_kwargs={"literal_binds": True}))
+            return _FakeScalarResult()
+
+    monkeypatch.setattr(ex, "_question_count", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(ex, "ensure_not_answer_timed_out", lambda db, row: row)
+
+    _ = ex.get_or_create_active_examination_session(_FakeDb(), "client_x", "employee_y")
+
+    sql = captured["sql"]
+    assert " IN " in sql
+    assert "'scheduled'" in sql
+    assert "'in_progress'" in sql
+    assert "'cancelled'" not in sql
+
+
+def test_completed_examination_protocol_html_includes_related_part2_fragment(monkeypatch) -> None:
+    from skill_assessment.runner import app
+
+    monkeypatch.setenv("SKILL_ASSESSMENT_TELEGRAM_OUTBOUND", "mock")
+    monkeypatch.setenv("SKILL_ASSESSMENT_PUBLIC_BASE_URL", "https://example.test")
+
+    u = uuid.uuid4().hex[:8]
+    cid, eid = f"proto_c_{u}", f"proto_e_{u}"
+
+    with TestClient(app) as client:
+        r = client.post("/api/skill-assessment/sessions", json={"client_id": cid, "employee_id": eid})
+        assert r.status_code == 200
+        sa_session_id = r.json()["id"]
+
+        r = client.post(f"/api/skill-assessment/sessions/{sa_session_id}/start")
+        assert r.status_code == 200
+
+        r = client.post(
+            "/api/skill-assessment/examination/sessions",
+            json={"client_id": cid, "employee_id": eid, "scenario_id": "regulation_v1"},
+        )
+        assert r.status_code == 200
+        exam_session_id = r.json()["id"]
+
+        r = client.post(
+            f"/api/skill-assessment/examination/sessions/{exam_session_id}/consent",
+            json={"accepted": True},
+        )
+        assert r.status_code == 200
+
+        r = client.post(f"/api/skill-assessment/examination/sessions/{exam_session_id}/intro/done")
+        assert r.status_code == 200
+
+        for i in range(5):
+            r = client.post(
+                f"/api/skill-assessment/examination/sessions/{exam_session_id}/answer",
+                json={"transcript_text": f"Ответ сотрудника {i + 1} по регламенту"},
+            )
+            assert r.status_code == 200
+
+        r = client.post(f"/api/skill-assessment/examination/sessions/{exam_session_id}/complete")
+        assert r.status_code == 200
+
+        r = client.get(f"/api/skill-assessment/examination/sessions/{exam_session_id}/protocol/html")
+        assert r.status_code == 200
+        assert "Связанный общий протокол оценки" in r.text
+        assert "Этап 2 (кейсы):" in r.text
+        assert "кейсы назначены" in r.text
+        assert "https://example.test/api/skill-assessment/public/report/html?token=" in r.text

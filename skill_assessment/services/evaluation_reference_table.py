@@ -69,6 +69,9 @@ def list_skill_evaluation_reference(
                     domain_title=r.domain_title,
                     aggregate_level_0_3=round(avg_f, 2),
                     aggregate_pct_0_100=pct,
+                    session_completed_at=rep.session.completed_at,
+                    session_updated_at=rep.session.updated_at,
+                    session_created_at=rep.session.created_at,
                 )
             )
 
