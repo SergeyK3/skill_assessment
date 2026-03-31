@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
+from random import Random
 
 from sqlalchemy.orm import Session
 
@@ -15,11 +17,23 @@ from skill_assessment.integration.hr_core import (
     get_examination_question_texts,
 )
 
-_MANDATORY = (
-    "Каково назначение или цель вашей должности в организации и подразделении? "
-    "Сформулируйте своими словами.",
-    "Какой ценный конечный продукт вы создаёте или обеспечиваете в своей работе? Приведите короткий пример.",
-    "Назовите ключевые KPI вашей должности и расскажите, как вы их отслеживаете и какие целевые значения для вас актуальны.",
+_MANDATORY_VARIANTS = (
+    (
+        "Каково назначение или цель вашей должности в организации и подразделении? "
+        "Сформулируйте своими словами.",
+        "В чём, по-вашему, основная цель вашей должности в подразделении и компании?",
+        "Как вы формулируете ключевую миссию своей роли в организации?",
+    ),
+    (
+        "Какой ценный конечный продукт вы создаёте или обеспечиваете в своей работе? Приведите короткий пример.",
+        "Какой конкретный результат вашей работы наиболее ценен для бизнеса? Приведите пример из практики.",
+        "Что можно назвать вашим основным рабочим продуктом для компании и чем он измерим?",
+    ),
+    (
+        "Назовите ключевые KPI вашей должности и расскажите, как вы их отслеживаете и какие целевые значения для вас актуальны.",
+        "Какие KPI для вашей роли вы считаете приоритетными, как контролируете их динамику и к каким значениям стремитесь?",
+        "По каким показателям вы оцениваете эффективность своей работы и как регулярно проверяете выполнение плана?",
+    ),
 )
 
 
@@ -51,6 +65,20 @@ def tail_from_regulation_base(base: list[str]) -> tuple[str, str]:
     return _tail_from_regulation_base(base)
 
 
+def _stable_seed_int(*parts: str) -> int:
+    src = "|".join([str(p or "").strip() for p in parts])
+    h = hashlib.sha256(src.encode("utf-8")).hexdigest()
+    return int(h[:16], 16)
+
+
+def _pick_variant(variants: tuple[str, ...], *, seed: int, slot: int) -> str:
+    if not variants:
+        return ""
+    rnd = Random(seed + slot * 1009)
+    idx = rnd.randrange(0, len(variants))
+    return variants[idx]
+
+
 def _tail_from_regulation_base(base: list[str]) -> tuple[str, str]:
     """Два вопроса по регламенту из списка ядра или общие формулировки."""
     if len(base) >= 2:
@@ -67,7 +95,27 @@ def _tail_from_regulation_base(base: list[str]) -> tuple[str, str]:
     )
 
 
-def compose_examination_question_plan(db: Session, client_id: str, employee_id: str) -> list[str] | None:
+def _regulation_topic(raw: str) -> str:
+    """
+    Вытащить тему из текста регламента/вопроса без «готового ответа».
+
+    Пример: "Цель по регламенту: обеспечивать ... без потерь" -> "цель по регламенту".
+    """
+    t = " ".join((raw or "").strip().split())
+    if not t:
+        return "ключевые положения регламента"
+    for sep in (":", "—", ";"):
+        if sep in t:
+            t = t.split(sep, 1)[0].strip()
+            break
+    if len(t) > 140:
+        t = t[:140].rstrip(" ,.;:")
+    return t or "ключевые положения регламента"
+
+
+def compose_examination_question_plan(
+    db: Session, client_id: str, employee_id: str, *, seed_key: str | None = None
+) -> list[str] | None:
     """
     Семантика как у ``get_examination_question_texts``:
 
@@ -82,17 +130,50 @@ def compose_examination_question_plan(db: Session, client_id: str, employee_id: 
         return []
 
     folder = (get_examination_instructions_folder_url(db, client_id, employee_id) or "").strip()
+    seed = _stable_seed_int("exam_q_plan_v2", client_id, employee_id, seed_key or "")
+    mandatory = [
+        _pick_variant(_MANDATORY_VARIANTS[0], seed=seed, slot=1),
+        _pick_variant(_MANDATORY_VARIANTS[1], seed=seed, slot=2),
+        _pick_variant(_MANDATORY_VARIANTS[2], seed=seed, slot=3),
+    ]
     if folder:
-        tail = (
+        tail_a_variants = (
             f"В папке должностных инструкций ({folder}) перечислены связанные документы. "
             "Какие из них напрямую касаются вашей должности и как вы сопоставляете их с регламентом подразделения?",
+            f"Посмотрите на состав документов в папке инструкций ({folder}). "
+            "Какие документы для вашей роли обязательны в первую очередь и почему?",
+            f"В рабочей папке инструкций ({folder}) есть несколько нормативных материалов. "
+            "Как вы определяете, какой из них применять в конкретной ситуации?",
+        )
+        tail_b_variants = (
             "Какой документ из этой папки вы чаще всего используете в работе и почему он важен для KPI?",
+            "На какой документ из папки вы опираетесь чаще всего и как он влияет на качество решений?",
+            "Приведите пример, когда документ из папки инструкций помог вам выполнить KPI или избежать ошибки.",
+        )
+        tail = (
+            _pick_variant(tail_a_variants, seed=seed, slot=10),
+            _pick_variant(tail_b_variants, seed=seed, slot=11),
         )
     else:
-        a, b = _tail_from_regulation_base(base)
+        if len(base) >= 2:
+            rnd = Random(seed + 707)
+            idxs = list(range(len(base)))
+            rnd.shuffle(idxs)
+            topic_a = _regulation_topic(base[idxs[0]])
+            topic_b = _regulation_topic(base[idxs[1]])
+            a = (
+                f"Опишите своими словами, как вы применяете в работе следующий блок регламента: «{topic_a}». "
+                "Какие действия обязательны и как вы проверяете качество выполнения?"
+            )
+            b = (
+                f"Разберите практический пример по теме «{topic_b}»: "
+                "как действуете по шагам и какие риски контролируете?"
+            )
+        else:
+            a, b = _tail_from_regulation_base(base)
         tail = (a, b)
 
-    out = list(_MANDATORY) + list(tail)
+    out = mandatory + list(tail)
     return clip_question_texts(out)
 
 
@@ -103,4 +184,10 @@ def fallback_examination_question_texts() -> list[str]:
     Используется для Part 1 чек-листа по документам, чтобы сотрудник всё равно прошёл тот же каркас (цель, продукт, KPI + два по регламенту).
     """
     a, b = _tail_from_regulation_base([])
-    return clip_question_texts(list(_MANDATORY) + [a, b])
+    seed = _stable_seed_int("fallback_exam_q_plan_v2")
+    mandatory = [
+        _pick_variant(_MANDATORY_VARIANTS[0], seed=seed, slot=1),
+        _pick_variant(_MANDATORY_VARIANTS[1], seed=seed, slot=2),
+        _pick_variant(_MANDATORY_VARIANTS[2], seed=seed, slot=3),
+    ]
+    return clip_question_texts(mandatory + [a, b])

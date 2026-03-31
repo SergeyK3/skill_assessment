@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 import uuid
@@ -120,6 +121,17 @@ def _session_out(db: Session, row: AssessmentSessionRow) -> AssessmentSessionOut
     )
     slot_ld, slot_lt = utc_naive_slot_to_local_date_time_strings(sched)
     manager_token = _maybe_ensure_manager_access_token(db, row)
+    manager_url = None
+    if manager_token:
+        try:
+            from skill_assessment.services.manager_assessment import (
+                build_manager_assessment_absolute_url,
+                build_manager_assessment_page_path,
+            )
+
+            manager_url = build_manager_assessment_absolute_url(db, row.id) or build_manager_assessment_page_path(manager_token)
+        except Exception:
+            manager_url = None
     return AssessmentSessionOut(
         id=row.id,
         client_id=row.client_id,
@@ -149,6 +161,8 @@ def _session_out(db: Session, row: AssessmentSessionRow) -> AssessmentSessionOut
         hr_no_show=is_hr_no_show(row, db),
         exam_status_label=latest_exam_status_label(db, row),
         manager_assessment_token=manager_token,
+        manager_assessment_url=manager_url,
+        manager_overall_comment=getattr(row, "manager_overall_comment", None),
         manager_assessment_deadline_at=manager_assessment_deadline_aware_utc(row),
         manager_assessment_deadline_label=manager_assessment_deadline_label(row),
         manager_assessment_notified_at=utc_naive_to_aware_utc(getattr(row, "manager_assessment_notified_at", None)),
@@ -392,9 +406,17 @@ def set_session_phase(db: Session, session_id: str, body: SessionPhaseUpdate) ->
     row = db.get(AssessmentSessionRow, session_id)
     if row is None:
         raise HTTPException(status_code=404, detail="session_not_found")
+    old_phase = row.phase
     row.phase = body.phase.value
     db.commit()
     db.refresh(row)
+    if old_phase == SessionPhase.PART1.value and row.phase == SessionPhase.PART2.value:
+        try:
+            from skill_assessment.services import part2_case as part2_case_svc
+
+            part2_case_svc.send_part2_case_ready_notice(db, session_id)
+        except Exception:
+            _log.exception("assessment_service: part2 case Telegram notice failed after phase update %s", session_id)
     return _session_out(db, row)
 
 
