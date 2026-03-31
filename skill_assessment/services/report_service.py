@@ -13,8 +13,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from skill_assessment.domain.entities import EvidenceKind, Part1TurnRole
+from skill_assessment.domain.examination_entities import ExaminationSessionStatus
 from skill_assessment.infrastructure.db_models import (
     AssessmentSessionRow,
+    ExaminationSessionRow,
     SessionPart1TurnRow,
     SkillAssessmentResultRow,
     SkillDomainRow,
@@ -37,6 +39,7 @@ from skill_assessment.schemas.api import (
 )
 from skill_assessment.services import part1_docs_checklist as part1_docs_svc
 from skill_assessment.services.assessment_service import _evidence_from_json, _session_out
+from skill_assessment.services import examination_service as examination_svc
 from skill_assessment.services.part1_service import turn_row_to_out
 from skill_assessment.services import part2_case as part2_case_svc
 
@@ -205,7 +208,7 @@ def _render_text_block(text: str) -> str:
 
 # Коды навыков в скобках в тексте кейса (для отчёта показываем только названия).
 _CASE_SKILL_CODE_PARENS_RE = re.compile(
-    r"\s*\(\s*(?:код\s*)?C_[0-9a-fA-F]+\s*\)",
+    r"\s*\(\s*(?:код(?:ы)?\s*)?(?:C_[A-Za-z0-9_]+(?:\s*,\s*C_[A-Za-z0-9_]+)*)\s*\)",
     re.IGNORECASE,
 )
 
@@ -438,6 +441,59 @@ def _part1_stt_note() -> str:
     )
 
 
+def _related_completed_examination_part1_metrics(
+    db: Session, row: AssessmentSessionRow
+) -> tuple[float | None, int | None, str | None, list[dict[str, object]]]:
+    """Возвращает итог связанного Telegram-опроса по регламентам для использования в Part 1 общего отчёта."""
+    if not row.employee_id:
+        return None, None, None, []
+    created_at = getattr(row, "created_at", None)
+    exam_rows = db.scalars(
+        select(ExaminationSessionRow)
+        .where(
+            ExaminationSessionRow.client_id == row.client_id,
+            ExaminationSessionRow.employee_id == row.employee_id,
+            ExaminationSessionRow.status == ExaminationSessionStatus.COMPLETED.value,
+        )
+        .order_by(ExaminationSessionRow.created_at.desc())
+        .limit(10)
+    ).all()
+    for exam_row in exam_rows:
+        if created_at is not None and exam_row.created_at is not None and exam_row.created_at < created_at:
+            continue
+        try:
+            proto = examination_svc.build_protocol(db, exam_row.id)
+        except Exception:
+            continue
+        avg4 = getattr(proto, "average_score_4", None)
+        avg_pct = getattr(proto, "average_score_percent", None)
+        q_count = len(getattr(proto, "items", None) or [])
+        items = [
+            {
+                "question_text": str(getattr(item, "question_text", "") or ""),
+                "transcript_text": str(getattr(item, "transcript_text", "") or ""),
+                "score_percent": getattr(item, "score_percent", None),
+            }
+            for item in (getattr(proto, "items", None) or [])
+        ]
+        if avg4 is None and avg_pct is None:
+            continue
+        summary = (
+            f"Опрос по регламентам: {q_count} вопросов, итог {avg4:.2f}/4 ({avg_pct:.1f}%)."
+            if avg4 is not None and avg_pct is not None
+            else "Опрос по регламентам завершён."
+        )
+        pct_int = None if avg_pct is None else max(0, min(100, int(round(float(avg_pct)))))
+        return avg4, pct_int, summary, items
+    return None, None, None, []
+
+
+def _level_to_pct(level: int | None) -> int | None:
+    if level is None:
+        return None
+    return int(round((max(0, min(3, int(level))) / 3.0) * 100))
+
+
 def _normalize_manager_evidence(text: str | None) -> str:
     if text is None:
         return "—"
@@ -527,6 +583,11 @@ def _build_report_payload(db: Session, session_id: str) -> dict[str, object]:
     part1_turns = [turn_row_to_out(r) for r in turn_rows]
     checklist = part1_docs_svc.get_part1_docs_checklist(db, session_id)
     part1_level, part1_pct, p1_summary = _part1_turn_score(part1_turns, checklist.answers)
+    part1_exam_score_4, part1_exam_pct, part1_exam_summary, part1_exam_items = _related_completed_examination_part1_metrics(db, srow)
+    if part1_exam_summary and (part1_level is None or part1_pct is None):
+        part1_pct = part1_exam_pct
+        part1_level = _level_from_pct(part1_exam_pct)
+        p1_summary = part1_exam_summary
 
     emp_snap = get_employee(db, srow.client_id, srow.employee_id)
     emp_label = employee_display_label(emp_snap)
@@ -573,8 +634,10 @@ def _build_report_payload(db: Session, session_id: str) -> dict[str, object]:
         "report_matrix_skill_codes": matrix_codes,
         "report_examination_kpi_codes": list(kpi_labels),
         "part1_summary": p1_summary,
+        "part1_exam_score_4": part1_exam_score_4,
         "part1_overall_level": part1_level,
         "part1_overall_pct": part1_pct,
+        "part1_exam_items": part1_exam_items,
         "part1_turns": part1_turns,
         "part2_summary": part2_case_svc.get_part2_summary(srow),
         "part2_case_count": part2.case_count if part2 is not None else 0,
@@ -634,12 +697,9 @@ def render_session_report_html(rep: SessionReportPublicOut | SessionReportHrOut)
             f'<tr><th scope="row">Код подразделения</th><td><code>{html.escape(hdr.department_code or "—")}</code></td></tr>'
         )
     stt_note = html.escape(getattr(rep, "report_part1_stt_note", "") or "")
-    codes = getattr(rep, "report_matrix_skill_codes", None) or []
-    codes_cell = ", ".join(html.escape(c) for c in codes) if codes else "—"
     kpis = getattr(rep, "report_examination_kpi_codes", None) or []
     kpi_cell = ", ".join(html.escape(k) for k in kpis) if kpis else "—"
     meta_rows.append(f'<tr><th scope="row">STT</th><td>{stt_note or "—"}</td></tr>')
-    meta_rows.append(f'<tr><th scope="row">Коды навыков (матрица)</th><td>{codes_cell}</td></tr>')
     meta_rows.append(f'<tr><th scope="row">KPI (регламент / экзамен)</th><td>{kpi_cell}</td></tr>')
     meta_table = (
         '<table class="report-employee" style="width:100%;font-size:0.88rem;margin:0.75rem 0 0 0;">'
@@ -649,6 +709,11 @@ def render_session_report_html(rep: SessionReportPublicOut | SessionReportHrOut)
     )
 
     blocks: list[str] = []
+    part1_title = (
+        "Часть 1 — опрос по регламентам"
+        if not rep.part1_turns and getattr(rep, "part1_exam_score_4", None) is not None
+        else "Часть 1 — устное интервью (LLM)"
+    )
     if rep.part1_turns:
         dialog_parts: list[str] = []
         for t in rep.part1_turns:
@@ -662,14 +727,31 @@ def render_session_report_html(rep: SessionReportPublicOut | SessionReportHrOut)
                 )
         dialog_html = '<div class="dialog">' + "".join(dialog_parts) + "</div>"
         blocks.append(
-            f'<div class="block"><h2>Часть 1 — устное интервью (LLM)</h2>'
+            f'<div class="block"><h2>{html.escape(part1_title)}</h2>'
             f'<p class="meta" style="margin-top:0;">{html.escape(rep.part1_summary)}</p>'
             f"{dialog_html}</div>"
         )
     else:
+        exam_items_html = ""
+        if getattr(rep, "part1_exam_items", None):
+            rows = []
+            for idx, item in enumerate(rep.part1_exam_items, start=1):
+                qtxt = html.escape(item.question_text or "—")
+                atxt = _render_text_block(item.transcript_text or "—")
+                pct = "—" if item.score_percent is None else f"{float(item.score_percent):.1f}%"
+                rows.append(
+                    '<div style="border:1px solid var(--border); border-radius:8px; padding:0.85rem; margin-top:0.75rem;">'
+                    + f'<p style="margin:0 0 0.4rem 0;"><strong>Вопрос {idx}:</strong> {qtxt}</p>'
+                    + f'<p class="meta" style="margin:0 0 0.45rem 0;"><strong>Оценка ответа:</strong> {pct}</p>'
+                    + f'<div class="ans"><strong>Ответ сотрудника:</strong>{atxt}</div>'
+                    + '</div>'
+                )
+            exam_items_html = "".join(rows)
         blocks.append(
-            f'<div class="block"><h2>Часть 1 — устное интервью (LLM)</h2>'
-            f'<p class="meta" style="margin-top:0;">{html.escape(rep.part1_summary)}</p></div>'
+            f'<div class="block"><h2>{html.escape(part1_title)}</h2>'
+            f'<p class="meta" style="margin-top:0;">{html.escape(rep.part1_summary)}</p>'
+            + exam_items_html
+            + '</div>'
         )
 
     part2_extra = []
@@ -692,9 +774,7 @@ def render_session_report_html(rep: SessionReportPublicOut | SessionReportHrOut)
                 result = "решён"
             elif c.passed is False:
                 result = "не решён"
-            covered = ", ".join([f"{s.skill_title} ({s.skill_code})" for s in c.covered_skills]) or (
-                f"{c.skill_title} ({c.skill_code})"
-            )
+            covered = ", ".join([s.skill_title for s in c.covered_skills if s.skill_title]) or c.skill_title
             score_html = (
                 f' · Оценка: <strong>{c.case_level_0_3}/3 · {c.case_pct_0_100}%</strong>'
                 if c.case_level_0_3 is not None or c.case_pct_0_100 is not None
@@ -705,9 +785,7 @@ def render_session_report_html(rep: SessionReportPublicOut | SessionReportHrOut)
                 + "".join(
                     "<li>"
                     + html.escape(skill.skill_title)
-                    + " ("
-                    + html.escape(skill.skill_code)
-                    + "): "
+                    + ": "
                     + html.escape(str(skill.level_0_3 if skill.level_0_3 is not None else "—"))
                     + "/3, "
                     + html.escape(str(skill.pct_0_100 if skill.pct_0_100 is not None else "—"))
@@ -743,7 +821,7 @@ def render_session_report_html(rep: SessionReportPublicOut | SessionReportHrOut)
                 if consensus.overall_level_0_3 is not None or consensus.overall_pct_0_100 is not None
                 else ""
             )
-            + f'<p class="meta" style="margin:0 0 0.45rem 0;">{html.escape(consensus.summary or "—")}</p>'
+            + f'<p class="meta" style="margin:0 0 0.45rem 0;"><strong>Обоснование оценки:</strong> {html.escape(consensus.summary or "—")}</p>'
             + (
                 '<p class="meta" style="margin:0 0 0.45rem 0;"><strong>Сильные стороны:</strong> '
                 + html.escape(", ".join(consensus.strengths))
@@ -806,23 +884,27 @@ def render_session_report_html(rep: SessionReportPublicOut | SessionReportHrOut)
 
     tbody_mgr = []
     for r in rep.rows:
-        mgr = _normalize_manager_evidence(r.evidence_manager)
-        mgr_cell = html.escape(mgr).replace("\n", "<br/>") if mgr != "—" else "—"
         tbody_mgr.append(
             "<tr>"
             f"<td>{html.escape(r.skill_title)}</td>"
             f"<td><strong>{r.part3_level if r.part3_level is not None else '—'}</strong></td>"
-            f"<td>{mgr_cell}</td>"
             "</tr>"
         )
 
     blocks.append(
         '<div class="block"><h2>Часть 3 — оценка руководителем</h2>'
-        '<p class="meta" style="margin-top:0;">Оценка по шкале 0–3 и комментарий руководителя по навыку (если указан при оценке).</p>'
-        '<table><thead><tr><th>Навык</th><th>Оценка (0–3)</th><th>Комментарий</th></tr></thead><tbody>'
-        + ("".join(tbody_mgr) or "<tr><td colspan=\"3\">Нет данных</td></tr>")
+        '<p class="meta" style="margin-top:0;">Оценка по шкале 0–3 по каждому навыку. Развёрнутый комментарий руководителя приводится отдельно ниже.</p>'
+        '<table><thead><tr><th>Навык</th><th>Оценка (0–3)</th></tr></thead><tbody>'
+        + ("".join(tbody_mgr) or "<tr><td colspan=\"2\">Нет данных</td></tr>")
         + "</tbody></table></div>"
     )
+    overall_comment = (getattr(sess, "manager_overall_comment", None) or "").strip()
+    if overall_comment:
+        blocks.append(
+            '<div class="block"><h2>Общий комментарий руководителя</h2>'
+            + f'<p style="white-space:pre-wrap; margin:0;">{html.escape(overall_comment)}</p>'
+            + "</div>"
+        )
 
     rec_items = []
     for item in rep.development_recommendations:
@@ -848,24 +930,54 @@ def render_session_report_html(rep: SessionReportPublicOut | SessionReportHrOut)
     )
 
     tbody_sum = []
+    tbody_pct = []
     for r in rep.rows:
         parts = [x for x in (r.part1_level, r.part2_level, r.part3_level) if x is not None]
         overall = f"{sum(parts) / len(parts):.1f}" if parts else "—"
+        p1 = "—" if r.part1_level is None else str(r.part1_level)
         p2 = "—" if r.part2_level is None else str(r.part2_level)
         p3 = "—" if r.part3_level is None else str(r.part3_level)
         tbody_sum.append(
             "<tr>"
             f"<td>{html.escape(r.skill_title)}</td>"
-            f"<td>{p2}</td><td>{p3}</td>"
+            f"<td>{p1}</td><td>{p2}</td><td>{p3}</td>"
             f"<td><strong>{overall}</strong></td>"
+            "</tr>"
+        )
+        pct_parts = [x for x in (rep.part1_overall_pct, _level_to_pct(r.part2_level), _level_to_pct(r.part3_level)) if x is not None]
+        overall_pct = f"{sum(pct_parts) / len(pct_parts):.1f}%" if pct_parts else "—"
+        p1_pct = "—" if rep.part1_overall_pct is None else f"{rep.part1_overall_pct}%"
+        p2_pct = "—" if r.part2_level is None else f"{_level_to_pct(r.part2_level)}%"
+        p3_pct = "—" if r.part3_level is None else f"{_level_to_pct(r.part3_level)}%"
+        tbody_pct.append(
+            "<tr>"
+            f"<td>{html.escape(r.skill_title)}</td>"
+            f"<td>{p1_pct}</td><td>{p2_pct}</td><td>{p3_pct}</td>"
+            f"<td><strong>{overall_pct}</strong></td>"
             "</tr>"
         )
 
     p1_line = (
-        f'<p class="meta" style="margin-top:0;">Итоговая оценка устного интервью (Part 1): <strong>{rep.part1_overall_level}/3</strong> · '
-        f"{rep.part1_overall_pct}%.</p>"
-        if rep.part1_overall_level is not None and rep.part1_overall_pct is not None
-        else '<p class="meta" style="margin-top:0;">Итог Part 1 пока не рассчитан.</p>'
+        f'<p class="meta" style="margin-top:0;">Итоговая оценка Part 1: <strong>{rep.part1_exam_score_4:.2f}/4</strong>'
+        + (
+            f' · <strong>{rep.part1_overall_level}/3</strong> после приведения к общей шкале'
+            if rep.part1_overall_level is not None
+            else ""
+        )
+        + f" · {rep.part1_overall_pct}%.</p>"
+        if rep.part1_exam_score_4 is not None and rep.part1_overall_pct is not None
+        else (
+            f'<p class="meta" style="margin-top:0;">Итоговая оценка устного интервью (Part 1): <strong>{rep.part1_overall_level}/3</strong> · '
+            f"{rep.part1_overall_pct}%.</p>"
+            if rep.part1_overall_level is not None and rep.part1_overall_pct is not None
+            else '<p class="meta" style="margin-top:0;">Итог Part 1 пока не рассчитан.</p>'
+        )
+    )
+    pct_caption = (
+        '<p class="muted">В процентной таблице Part 1 берётся из завершённого опроса по регламентам, '
+        'Part 2 и Part 3 переводятся из шкалы 0–3 в проценты от максимума.</p>'
+        if rep.part1_overall_pct is not None
+        else '<p class="muted">Part 1 пока не рассчитан, поэтому в процентной таблице используются только доступные части.</p>'
     )
     if rep.part2_case_count and rep.part2_overall_level is not None:
         p2_line = (
@@ -884,11 +996,20 @@ def render_session_report_html(rep: SessionReportPublicOut | SessionReportHrOut)
         '<div class="block"><h2>Сводка (иллюстрация весов)</h2>'
         + p1_line
         + p2_line
-        + '<table><thead><tr><th>Навык</th><th>Часть 2 (кейс)</th><th>Часть 3 (руководитель)</th>'
+        + '<table><thead><tr><th>Навык</th><th>Часть 1 (общая шкала 0–3)</th><th>Часть 2 (кейс)</th><th>Часть 3 (руководитель)</th>'
         '<th>Итог по навыку (среднее по заполненным частям 1–3)</th></tr></thead><tbody>'
-        + ("".join(tbody_sum) or '<tr><td colspan="4">Нет результатов</td></tr>')
+        + ("".join(tbody_sum) or '<tr><td colspan="5">Нет результатов</td></tr>')
         + "</tbody></table>"
         + '<p class="muted">Баллы Part 1 для каждого навыка совпадают с итогом Part 1 выше и участвуют в среднем «Итог по навыку» вместе с Part 2 и Part 3, если они заполнены.</p></div>'
+    )
+    blocks.append(
+        '<div class="block"><h2>Сводка по процентной шкале</h2>'
+        + '<table><thead><tr><th>Навык</th><th>Часть 1 (%)</th><th>Часть 2 (%)</th><th>Часть 3 (%)</th>'
+        '<th>Итог по навыку (%)</th></tr></thead><tbody>'
+        + ("".join(tbody_pct) or '<tr><td colspan="5">Нет результатов</td></tr>')
+        + "</tbody></table>"
+        + pct_caption
+        + "</div>"
     )
 
     body_inner = "\n".join(blocks)
