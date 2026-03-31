@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from app.db import SessionLocal
 
+from skill_assessment.domain.entities import AssessmentSessionStatus, SessionPhase
 from skill_assessment.infrastructure.db_models import AssessmentSessionRow
 from skill_assessment.services.examination_answer_timeout import process_examination_answer_timeouts_once
 from skill_assessment.services.docs_survey_hr_notify import notify_hr_docs_survey_consent_issue
@@ -43,6 +44,10 @@ def process_consent_timeouts_once() -> int:
             now = datetime.now(timezone.utc)
             row.docs_survey_pd_consent_status = "timed_out"
             row.docs_survey_pd_consent_at = now
+            row.status = AssessmentSessionStatus.CANCELLED.value
+            row.phase = SessionPhase.PART1.value
+            row.completed_at = now
+            row.docs_survey_exam_gate_awaiting = False
             if sent:
                 row.docs_survey_hr_notified_no_consent_at = now
             db.commit()

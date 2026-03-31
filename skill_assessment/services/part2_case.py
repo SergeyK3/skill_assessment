@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -16,8 +17,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from skill_assessment.adapters.telegram_outbound import get_telegram_outbound
-from skill_assessment.domain.entities import EvidenceKind, SessionPhase
-from skill_assessment.infrastructure.db_models import AssessmentSessionRow, SkillAssessmentResultRow, SkillRow
+from skill_assessment.domain.entities import AssessmentSessionStatus, EvidenceKind, SessionPhase
+from skill_assessment.infrastructure.db_models import (
+    AssessmentSessionRow,
+    SkillAssessmentResultRow,
+    SkillRow,
+)
 from skill_assessment.integration.hr_core import (
     get_assessment_case_count,
     employee_greeting_label,
@@ -43,6 +48,7 @@ from skill_assessment.services import examination_service as examination_svc
 from skill_assessment.services import llm_costs as llm_costs_svc
 from skill_assessment.services import manager_assessment as manager_assessment_svc
 from skill_assessment.services import part1_docs_checklist as part1_docs_svc
+from skill_assessment.services.public_url import skill_assessment_public_base_url_for_device_links
 from skill_assessment.services.session_competency_matrix import (
     SessionCompetencySkill,
     list_session_competency_skills,
@@ -65,6 +71,124 @@ _ANSWER_LABELS = {
     "partial": "закрыто частично",
     "no": "есть пробел",
 }
+
+
+def _clean_skill_label_for_telegram(raw: str | None) -> str:
+    t = str(raw or "").strip()
+    if not t:
+        return ""
+    # Убираем технические id в хвостах вида "(C_xxx)", "(c_xxx)".
+    t = re.sub(r"\(\s*[cC]_[^)]+\)", "", t).strip()
+    t = re.sub(r"\s{2,}", " ", t)
+    return t
+
+
+def _strip_technical_skill_ids(text: str | None) -> str:
+    t = str(text or "")
+    if not t:
+        return ""
+    t = re.sub(r"\(\s*[cC]_[^)]+\)", "", t)
+    t = re.sub(r"\s{2,}", " ", t)
+    return t.strip()
+
+
+def _clean_case_text_for_telegram(text: str | None) -> str:
+    """
+    Убираем служебные/методические строки из кейса для Telegram.
+    В чате сотруднику нужен только сам сценарий кейса.
+    """
+    raw = _strip_technical_skill_ids(text)
+    if not raw:
+        return ""
+    drop_prefixes = (
+        "заголовок:",
+        "навыки в фокусе:",
+        "навык в фокусе:",
+        "роль:",
+        "должность:",
+    )
+    kept: list[str] = []
+    for line in raw.splitlines():
+        ln = line.strip()
+        if not ln:
+            kept.append("")
+            continue
+        low = ln.lower()
+        if low.startswith(drop_prefixes):
+            continue
+        if low == "ситуация:":
+            continue
+        if low.startswith("вы выполняете роль"):
+            pos = low.find("возникла")
+            if pos >= 0:
+                kept.append(ln[pos:].strip())
+            continue
+        kept.append(ln)
+    text_out = "\n".join(kept)
+    text_out = re.sub(r"\n{3,}", "\n\n", text_out)
+    text_out = re.sub(
+        r"(?is)где нужно не только показать основной навык\s+«[^»]+»,?\s*но и одновременно проявить связанные навыки:\s*[^.]+\.?",
+        "в которой нужно принять решение в условиях ограниченного времени.",
+        text_out,
+    )
+    text_out = re.sub(r"(?is)основн(?:ой|ые)\s+навык[аи]?\s+«[^»]+»", "", text_out)
+    text_out = re.sub(r"(?is)связанн(?:ые|ый)\s+навык[аи]?:\s*[^.]+\.?", "", text_out)
+    text_out = re.sub(r"(?is)навык[аи]?\s+«[^»]+»", "", text_out)
+    text_out = re.sub(r"(?im)^ситуация:\s*", "", text_out).strip()
+    text_out = re.sub(r"\s{2,}", " ", text_out)
+    return text_out.strip()
+
+
+def _telegram_case_message(case_idx: int, total: int, case_text: str | None) -> str:
+    header = f"Кейс {case_idx} из {total}."
+    body = _clean_case_text_for_telegram(case_text)
+    if body:
+        return f"{header}\n\n{body}"
+    return header
+
+
+def _build_part2_case_ready_message_queue(payload: dict[str, Any]) -> list[str]:
+    cases_list = payload.get("cases") if isinstance(payload.get("cases"), list) else []
+    n_cases = len(cases_list)
+    intro = "Этап 2: решение кейсов."
+    first_case_text = str(cases_list[0].get("text") or "") if cases_list else ""
+    first_case_block = _telegram_case_message(1, n_cases, first_case_text) if n_cases else ""
+    queue: list[str] = [intro]
+    if first_case_block:
+        queue.extend(_chunk_text_for_telegram(first_case_block))
+    return [item for item in queue if (item or "").strip()]
+
+
+def prepare_part2_case_ready_notice(
+    db: Session, session_id: str, skill_id: str | None = None, *, preferred_chat_id: str | None = None
+) -> dict[str, Any]:
+    row = _resolve_session_row(db, session_id)
+    chat_id = (preferred_chat_id or "").strip() or _resolve_case_chat_id(db, row)
+    bundle = get_session_cases(db, row.id)
+    case = get_session_case(db, row.id, skill_id)
+    if not chat_id:
+        return {"sent": False, "reason": "no_chat_id", "case": case, "bundle": bundle, "messages": []}
+
+    db.refresh(row)
+    payload = _parse_cases_payload(row.part2_cases_json)
+    cases_list = payload.get("cases") if isinstance(payload.get("cases"), list) else []
+    n_cases = len(cases_list)
+    message_queue = _build_part2_case_ready_message_queue(payload)
+    if n_cases > 0:
+        payload[_TELEGRAM_ANSWER_FLOW_KEY] = {"awaiting_index": 0, "answers": {}}
+        row.part2_cases_json = _dump_cases_payload(payload)
+        db.commit()
+        db.refresh(row)
+    return {
+        "sent": bool(message_queue),
+        "reason": None,
+        "http_status": None,
+        "case": case,
+        "bundle": bundle,
+        "chat_id": chat_id,
+        "telegram_messages_sent": len(message_queue),
+        "messages": message_queue,
+    }
 _PASS_PCT_MAP = {
     1: {0: 0, 1: 100},
     2: {0: 0, 1: 67, 2: 100},
@@ -148,6 +272,34 @@ def _parse_cases_payload(raw: str | None) -> dict[str, Any]:
 
 def _dump_cases_payload(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False)
+
+
+_TELEGRAM_ANSWER_FLOW_KEY = "telegram_answer_flow"
+
+
+def _chunk_text_for_telegram(text: str, max_len: int = 3800) -> list[str]:
+    """Telegram лимит 4096 символов; режем по строкам, затем по длине."""
+    s = (text or "").strip()
+    if not s:
+        return []
+    out: list[str] = []
+    while s:
+        if len(s) <= max_len:
+            out.append(s)
+            break
+        cut = s.rfind("\n\n", 0, max_len)
+        if cut < max_len // 2:
+            cut = s.rfind("\n", 0, max_len)
+        if cut < max_len // 2:
+            cut = max_len
+        chunk = s[:cut].rstrip()
+        if not chunk:
+            chunk = s[:max_len]
+            s = s[max_len:].lstrip()
+        else:
+            s = s[cut:].lstrip()
+        out.append(chunk)
+    return out
 
 
 def _skill_ref(skill: SessionCompetencySkill) -> dict[str, str]:
@@ -341,12 +493,12 @@ def build_part2_case_employee_page_absolute_url(
     *,
     skill_id: str | None = None,
 ) -> str | None:
-    base = (os.getenv("SKILL_ASSESSMENT_PUBLIC_BASE_URL") or "").strip()
+    base = skill_assessment_public_base_url_for_device_links()
     if not base:
         return None
     row = _resolve_session_row(db, session_id)
     token = part1_docs_svc.ensure_part1_docs_access_token(db, row)
-    return base.rstrip("/") + build_part2_case_employee_page_path(token, skill_id=skill_id)
+    return base + build_part2_case_employee_page_path(token, skill_id=skill_id)
 
 
 def build_public_report_path(token: str) -> str:
@@ -354,12 +506,12 @@ def build_public_report_path(token: str) -> str:
 
 
 def build_public_report_absolute_url(db: Session, session_id: str) -> str | None:
-    base = (os.getenv("SKILL_ASSESSMENT_PUBLIC_BASE_URL") or "").strip()
+    base = skill_assessment_public_base_url_for_device_links()
     if not base:
         return None
     row = _resolve_session_row(db, session_id)
     token = part1_docs_svc.ensure_part1_docs_access_token(db, row)
-    return base.rstrip("/") + build_public_report_path(token)
+    return base + build_public_report_path(token)
 
 
 def _focus_topics_for_session(db: Session, row: AssessmentSessionRow) -> list[str]:
@@ -393,10 +545,25 @@ def _requested_case_count(db: Session, row: AssessmentSessionRow, skill_count: i
 
 def _group_skills_for_cases(skills: list[SessionCompetencySkill], case_count: int) -> list[list[SessionCompetencySkill]]:
     count = _recommended_case_count(len(skills), case_count)
-    groups: list[list[SessionCompetencySkill]] = [[] for _ in range(count)]
-    for idx, skill in enumerate(skills):
-        groups[idx % count].append(skill)
-    return [g for g in groups if g]
+    if count <= 0:
+        return []
+    ordered = list(skills)
+    if count == 1:
+        return [ordered]
+    if count == 2:
+        # Приоритетный порядок без «перемешивания»: кейс 1 — первые 2 навыка, кейс 2 — следующие.
+        g1 = ordered[:2]
+        g2 = ordered[2:4]
+        rest = ordered[4:]
+        if rest:
+            g2.extend(rest)
+        out = [g for g in (g1, g2) if g]
+        return out if out else [ordered]
+
+    # Для 3 кейсов — последовательные «блоки» по приоритету (а не round-robin).
+    chunk = max(1, (len(ordered) + count - 1) // count)
+    groups = [ordered[i : i + chunk] for i in range(0, len(ordered), chunk)]
+    return [g for g in groups if g][:count]
 
 
 def _position_label(row: AssessmentSessionRow, db: Session) -> str:
@@ -454,7 +621,8 @@ def _llm_case_text(
     total: int,
 ) -> tuple[str | None, dict[str, int] | None, str | None]:
     primary = case_skills[0]
-    covered = [f"{s.skill_title} ({s.skill_code})" for s in case_skills]
+    primary_title = _clean_skill_label_for_telegram(primary.skill_title) or primary.skill_title
+    covered = [_clean_skill_label_for_telegram(s.skill_title) or s.skill_title for s in case_skills]
     focus_topics = _focus_topics_for_session(db, row)
     position = _position_label(row, db)
     regulation = _regulation_snippet(db, row)
@@ -464,7 +632,7 @@ def _llm_case_text(
         "Один кейс должен позволять оценить сразу несколько навыков одним цельным ответом.\n\n"
         f"Номер кейса: {ordinal} из {total}\n"
         f"Должность: {position}\n"
-        f"Основной навык: {primary.skill_title} ({primary.skill_code})\n"
+        f"Основной навык: {primary_title}\n"
         "Какие навыки должен покрывать кейс:\n- "
         + "\n- ".join(covered)
         + "\n"
@@ -472,12 +640,13 @@ def _llm_case_text(
         + "\n- ".join(focus_topics)
         + "\n\n"
         + (f"Выдержка из регламента/референса:\n{regulation}\n\n" if regulation else "")
-        + "Формат ответа (строго два блока с подписями, каждый с новой строки):\n"
-        "Заголовок: …\n"
-        "Ситуация:\n"
-        "Один или два абзаца: роль, контекст, конфликт/задача, сроки и риски. "
-        "Перечисли навыки из списка выше естественным языком (без отдельных рубрик «что сделать сотруднику», "
-        "«ограничения», «сильный ответ» и без абзаца «Дополнительно нужно закрыть пробелы…»).\n\n"
+        + "Формат ответа:\n"
+        "Только текст кейса, без заголовков, без списков и без служебных пометок.\n"
+        "Один или два абзаца: конкретная рабочая ситуация, конфликт/задача, сроки и риски. "
+        "В конце задай прямой вопрос: «Каковы ваши действия?» или близкий по смыслу.\n\n"
+        "Критично: не называй навыки, компетенции, матрицу навыков, KPI-названия, skill codes и не объясняй, "
+        "что именно проверяется. Не пиши фразы вида «основной навык», «связанные навыки», "
+        "«нужно показать навык», «в фокусе компетенция».\n"
         "Не используй таблицы, не упоминай ИИ, не пиши вводные пояснения."
     )
     model = _case_model_name()
@@ -500,16 +669,27 @@ def _template_case_text(
     ordinal: int,
     total: int,
 ) -> str:
-    primary = case_skills[0]
-    covered = "; ".join([f"{s.skill_title} ({s.skill_code})" for s in case_skills])
     position = _position_label(row, db)
-    focus_topics = _focus_topics_for_session(db, row)
-    return (
-        f"Заголовок: Кейс {ordinal}/{total} по навыкам «{covered}»\n\n"
-        f"Ситуация:\nВы выполняете роль «{position}». Возникла рабочая ситуация, где нужно не только "
-        f"показать основной навык «{primary.skill_title}», но и одновременно проявить связанные навыки: {covered}. "
-        f"Срок на решение ограничен одним рабочим днём, ошибка повлияет на KPI подразделения."
-    )
+    topics = _focus_topics_for_session(db, row)
+    soft_hint = topics[0] if topics else "внутренние регламенты и правила компании"
+    variants = [
+        (
+            f"Возникла рабочая ситуация: клиент просит изменить условия сделки и увеличить скидку, "
+            f"при этом грозит уйти к конкуренту. Решение нужно принять до конца рабочего дня, "
+            f"не нарушая {soft_hint}. Ошибка повлияет на результат подразделения. Каковы ваши действия?"
+        ),
+        (
+            f"Возникла рабочая ситуация: после сложного разговора клиент сомневается, продолжать ли работу с компанией, "
+            f"и просит немедленно пересмотреть предложение. У вас ограниченное время, нужно учесть "
+            f"{soft_hint} и не допустить потери клиента. Каковы ваши действия?"
+        ),
+        (
+            f"Возникла рабочая ситуация: в роли {position} вы получили срочный запрос, который нельзя закрыть "
+            f"по стандартному сценарию без риска для сроков, качества или финансового результата. "
+            f"Нужно быстро принять решение, согласовать шаги и соблюсти {soft_hint}. Каковы ваши действия?"
+        ),
+    ]
+    return variants[(ordinal - 1) % len(variants)]
 
 
 def _generate_case_item(
@@ -1361,11 +1541,14 @@ def send_part2_protocol_ready_notice(db: Session, session_id: str) -> dict[str, 
         [
             f"Здравствуйте, {name}!",
             "",
-            "Оценка по кейсам завершена и добавлена в общий протокол.",
+            "Оценка по кейсам завершена и добавлена в общий протокол (часть 2).",
             f"Итог ИИ: {bundle.solved_cases}/{bundle.case_count} = {bundle.overall_pct}%.",
             "",
             "Открыть общий протокол:",
             report_url if report_url else report_path,
+            "",
+            "Этап 3: оценка руководителя уже запущен. Руководителю отправлена ссылка на оценку навыков.",
+            "После того как руководитель завершит оценку, вы получите ссылку на полный протокол.",
         ]
     )
     outbound = get_telegram_outbound()
@@ -1389,60 +1572,98 @@ def _resolve_case_chat_id(db: Session, row: AssessmentSessionRow) -> str | None:
     emp = get_employee(db, row.client_id, row.employee_id)
     if emp is not None and emp.telegram_chat_id and str(emp.telegram_chat_id).strip():
         return str(emp.telegram_chat_id).strip()
-    raw = (os.getenv("TELEGRAM_DOCS_SURVEY_FALLBACK_CHAT_ID") or "").strip()
+    # Как в docs_survey_notify: если нет привязки и нет telegram у сотрудника в HR — тот же fallback (в т.ч. дефолт при отсутствии ключа в env).
+    raw = (os.getenv("TELEGRAM_DOCS_SURVEY_FALLBACK_CHAT_ID") or "300398364").strip()
     return raw or None
 
 
-def send_part2_case_ready_notice(db: Session, session_id: str, skill_id: str | None = None) -> dict[str, Any]:
-    row = _resolve_session_row(db, session_id)
-    chat_id = _resolve_case_chat_id(db, row)
-    token = part1_docs_svc.ensure_part1_docs_access_token(db, row)
-    bundle = get_session_cases(db, row.id)
-    case = get_session_case(db, row.id, skill_id)
+def find_latest_part1_assessment_session(
+    db: Session, *, client_id: str, employee_id: str | None
+) -> AssessmentSessionRow | None:
+    """Последняя сессия оценки навыков в фазе part1 для пары client/employee (по updated_at)."""
+    if not employee_id or not str(employee_id).strip():
+        return None
+    cid = str(client_id).strip()
+    eid = str(employee_id).strip()
+    return db.scalar(
+        select(AssessmentSessionRow)
+        .where(
+            AssessmentSessionRow.client_id == cid,
+            AssessmentSessionRow.employee_id == eid,
+            AssessmentSessionRow.phase == SessionPhase.PART1.value,
+            AssessmentSessionRow.status != AssessmentSessionStatus.CANCELLED.value,
+        )
+        .order_by(AssessmentSessionRow.updated_at.desc())
+        .limit(1)
+    )
+
+
+def on_examination_completed_advance_skill_assessment(
+    db: Session, exam_row: Any, *, preferred_chat_id: str | None = None, send_telegram: bool = True
+) -> dict[str, Any]:
+    """
+    После завершения экзамена по регламентам (Telegram/API): если есть сессия оценки в part1 —
+    переводим в part2 и шлём в Telegram ссылку на страницу кейсов (как при закрытии чек-листа Part1).
+    """
+    sa_row = find_latest_part1_assessment_session(db, client_id=exam_row.client_id, employee_id=exam_row.employee_id)
+    if sa_row is None:
+        return {"advanced": False, "reason": "assessment_part1_session_not_found"}
+    sa_row.phase = SessionPhase.PART2.value
+    db.commit()
+    db.refresh(sa_row)
+    try:
+        sent = (
+            send_part2_case_ready_notice(db, sa_row.id, preferred_chat_id=preferred_chat_id)
+            if send_telegram
+            else prepare_part2_case_ready_notice(db, sa_row.id, preferred_chat_id=preferred_chat_id)
+        )
+        return {"advanced": True, "assessment_session_id": sa_row.id, "part2_notice": sent}
+    except Exception as e:
+        _log.exception(
+            "part2_case: failed to send part2 notice after examination complete for assessment session %s",
+            sa_row.id,
+        )
+        return {
+            "advanced": True,
+            "assessment_session_id": sa_row.id,
+            "part2_notice": {"sent": False, "reason": str(e)},
+        }
+
+
+def send_part2_case_ready_notice(
+    db: Session, session_id: str, skill_id: str | None = None, *, preferred_chat_id: str | None = None
+) -> dict[str, Any]:
+    prepared = prepare_part2_case_ready_notice(db, session_id, skill_id, preferred_chat_id=preferred_chat_id)
+    chat_id = prepared.get("chat_id")
     if not chat_id:
-        return {"sent": False, "reason": "no_chat_id", "case": case, "bundle": bundle}
+        return prepared
     use_mock = (os.getenv("SKILL_ASSESSMENT_TELEGRAM_OUTBOUND") or "").strip().lower() == "mock"
     token_env = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
     if not use_mock and (not token_env or len(token_env) < 10):
-        return {"sent": False, "reason": "no_bot_token", "case": case, "bundle": bundle}
+        prepared["sent"] = False
+        prepared["reason"] = "no_bot_token"
+        return prepared
+    message_queue = list(prepared.get("messages") or [])
 
-    abs_url = build_part2_case_employee_page_absolute_url(db, row.id)
-    rel_url = build_part2_case_employee_page_path(token)
-    emp = get_employee(db, row.client_id, row.employee_id)
-    name = employee_greeting_label(emp) or "коллега"
-    lines = [
-        f"Здравствуйте, {name}!",
-        "",
-        "Этап 1 завершён. Переходим к части 2: решению кейсов.",
-        "",
-        f"Количество кейсов: {bundle.case_count}. Время на решение: {bundle.allotted_minutes} мин.",
-        "",
-        "Кейсы в фокусе:",
-    ]
-    for idx, item in enumerate(bundle.cases, start=1):
-        covered = ", ".join([f"{s.skill_title} ({s.skill_code})" for s in item.covered_skills]) or (
-            f"{item.skill_title} ({item.skill_code})"
-        )
-        lines.append(f"{idx}. {covered}")
-    lines.extend(["", "Откройте страницу кейсов и подготовьте ответы:"])
-    if abs_url:
-        lines.append(abs_url)
-    else:
-        lines.append(rel_url)
-    text = "\n".join(lines)
     send_token = token_env if token_env else "mock_token_for_tests"
     outbound = get_telegram_outbound()
-    result = outbound.send_message(
-        token=send_token,
-        chat_id=chat_id,
-        text=text,
-        reply_markup=None,
-    )
-    return {
-        "sent": bool(result.ok),
-        "reason": result.description,
-        "http_status": result.http_status,
-        "case": case,
-        "bundle": bundle,
-        "chat_id": chat_id,
-    }
+    results: list[Any] = []
+    for part in message_queue:
+        if not (part or "").strip():
+            continue
+        results.append(
+            outbound.send_message(
+                token=send_token,
+                chat_id=chat_id,
+                text=part.strip(),
+                reply_markup=None,
+            )
+        )
+
+    all_ok = bool(results) and all(getattr(r, "ok", False) for r in results)
+    last = results[-1] if results else None
+    prepared["sent"] = all_ok
+    prepared["reason"] = getattr(last, "description", None) if last else None
+    prepared["http_status"] = getattr(last, "http_status", None) if last else None
+    prepared["telegram_messages_sent"] = len(results)
+    return prepared

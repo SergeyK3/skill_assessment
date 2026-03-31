@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Протоколы экзаменов по регламентам</title>
+  <title>Протоколы опросов по регламентам</title>
   <link rel="stylesheet" href="/static/shared/layout.css">
   <style>
     .wrap { max-width: min(1200px, 98vw); margin: 0 auto; padding: 2rem 1.25rem; box-sizing: border-box; }
@@ -31,14 +31,14 @@
     </aside>
     <main class="main">
       <div class="content wrap">
-        <h1>Экзамены по внутренним регламентам</h1>
-        <p class="meta">Организация: <code id="clientIdDisplay">—</code><span id="employeeFilterHint" hidden> · сотрудник: <code id="employeeIdDisplay"></code></span>. Здесь видны завершённые и прерванные сессии экзамена по Telegram. Для завершённых можно открыть протокол в новой вкладке или скачать HTML. Откройте эту страницу с тем же <code>client_id</code>, что в URL рабочей сессии (пример: <code>/api/skill-assessment/workspace?client_id=…</code> или из ядра «Приложения»).</p>
+        <h1>Опросы по внутренним регламентам</h1>
+        <p class="meta">Организация: <code id="clientIdDisplay">—</code><span id="employeeFilterHint" hidden> · сотрудник: <code id="employeeIdDisplay"></code></span>. Здесь видны завершённые и прерванные сессии опроса (интервью) по регламентам в Telegram. Для завершённых можно открыть протокол в новой вкладке или скачать HTML. Откройте эту страницу с тем же <code>client_id</code>, что в URL рабочей сессии (пример: <code>/api/skill-assessment/workspace?client_id=…</code> или из ядра «Приложения»).</p>
         <p id="err" class="meta err" hidden></p>
         <div style="overflow-x:auto;">
           <table>
             <thead>
               <tr>
-                <th>Дата экзамена</th>
+                <th>Дата опроса</th>
                 <th>Дата оценки</th>
                 <th>ФИО</th>
                 <th>Должность</th>
@@ -87,7 +87,7 @@
       if (phase === 'blocked_consent') return 'Заблокирован: отказ от согласия';
       if (phase === 'completed' || status === 'completed') return 'Завершён';
       if (phase === 'protocol') return 'Протокол готов';
-      if (phase === 'questions') return 'Идёт экзамен';
+      if (phase === 'questions') return 'Идёт опрос';
       if (phase === 'intro') return 'Вступление';
       if (phase === 'consent') return 'Ожидает согласие';
       if (status === 'cancelled') return 'Отменён';
@@ -137,8 +137,8 @@
         const rows = await r.json();
         if (!rows.length) {
           const hint = employeeIdFilter
-            ? 'Нет экзаменов для этого сотрудника. Уберите фильтр сотрудника из URL или откройте страницу без <code>employee_id</code>.'
-            : 'Нет экзаменов для этой организации.';
+            ? 'Нет опросов для этого сотрудника. Уберите фильтр сотрудника из URL или откройте страницу без <code>employee_id</code>.'
+            : 'Нет опросов для этой организации.';
           tbody.innerHTML = '<tr><td colspan="12" class="meta">' + hint + '</td></tr>';
           return;
         }
@@ -181,7 +181,7 @@
       if (!btn) return;
       const sid = btn.getAttribute('data-sid');
       if (!sid) return;
-      if (!confirm('Удалить протокол и сессию экзамена из базы? Действие необратимо.')) return;
+      if (!confirm('Удалить протокол и сессию опроса из базы? Действие необратимо.')) return;
       btn.disabled = true;
       fetch(API + '/examination/sessions/' + encodeURIComponent(sid), { method: 'DELETE' })
         .then(function(r) {

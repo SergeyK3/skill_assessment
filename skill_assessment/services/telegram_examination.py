@@ -27,7 +27,7 @@ from skill_assessment.schemas.examination_api import (
 from skill_assessment.services import examination_service as ex
 
 CONSENT_PROMPT = (
-    "Согласие на обработку персональных данных и результатов проверки (экзамен по регламентам).\n"
+    "Согласие на обработку персональных данных и результатов проверки (опрос по внутренним регламентам).\n"
     "Продолжая, вы подтверждаете ознакомление с политикой организации.\n\n"
     "Ответьте одним сообщением (текстом или голосом):\n"
     "• «да» или «согласен» — принять\n"
@@ -41,7 +41,7 @@ CONSENT_PROMPT_AFTER_PART1_PD = (
 )
 
 INTRO_PROMPT = (
-    "Экзамен по внутренним регламентам и должностным инструкциям.\n"
+    "Опрос (интервью) по внутренним регламентам и должностным инструкциям.\n"
     "Ориентировочное время — до 30 минут, вопросы по очереди.\n\n"
     "Когда будете готовы, напишите «готов» / «да» или отправьте короткое голосовое с тем же смыслом."
 )
@@ -152,14 +152,14 @@ def _format_protocol_for_telegram(proto: ExaminationProtocolOut) -> list[str]:
         f"Должность: {proto.employee_position_label or '—'}",
         f"Подразделение: {proto.employee_department_label or '—'}",
         f"Организация (client_id): {proto.client_id}",
-        f"Дата прохождения экзамена: {_fmt_protocol_dt(proto.completed_at)}",
+        f"Дата завершения опроса: {_fmt_protocol_dt(proto.completed_at)}",
         f"Дата оценки: {_fmt_protocol_dt(proto.evaluated_at)}",
     ]
     if proto.average_score_4 is not None and proto.average_score_percent is not None:
         lines.extend(
             [
                 "",
-                "Итоговая (интегральная) оценка по экзамену",
+                "Итоговая (интегральная) оценка по опросу",
                 f"{proto.average_score_4:.2f} из 4 баллов · {proto.average_score_percent:.1f}%",
             ]
         )
@@ -178,7 +178,7 @@ def _format_protocol_for_telegram(proto: ExaminationProtocolOut) -> list[str]:
             )
         )
     messages.append(
-        "Чтобы завершить экзамен, напишите или скажите голосом: «готово», «готов» или «да»."
+        "Чтобы завершить опрос, напишите или скажите голосом: «готово», «готов» или «да»."
     )
     return messages
 
@@ -208,7 +208,7 @@ def handle_telegram_message(
     try:
         row = ex.get_or_create_active_examination_session(db, client_id, employee_id)
     except HTTPException as e:
-        return [f"Не удалось открыть сессию экзамена: {e.detail}"]
+        return [f"Не удалось открыть сессию опроса по регламентам: {e.detail}"]
 
     phase = ExaminationPhase(row.phase)
     msg = (text or "").strip()
@@ -216,12 +216,12 @@ def handle_telegram_message(
     try:
         if phase == ExaminationPhase.BLOCKED_NO_REGULATION:
             return [
-                "Экзамен приостановлен: для вашей должности и подразделения не найден регламент с KPI в системе. "
+                "Опрос приостановлен: для вашей должности и подразделения не найден регламент с KPI в системе. "
                 "Отдел кадров получил уведомление. После загрузки регламента кадры снимут блок — затем напишите сюда снова."
             ]
         if phase == ExaminationPhase.INTERRUPTED_TIMEOUT:
             return [
-                "Экзамен прерван по таймауту: между ответами прошло более 5 минут. "
+                "Опрос прерван по таймауту: между ответами прошло более 5 минут. "
                 "Отдел кадров получил уведомление. Для повторной проверки потребуется новое назначение."
             ]
 
@@ -283,8 +283,31 @@ def handle_telegram_message(
             ex.post_answer(db, row.id, ExaminationAnswerBody(transcript_text=msg))
             row = ex.get_examination_session(db, row.id)
             if ExaminationPhase(row.phase) == ExaminationPhase.PROTOCOL:
-                proto = ex.build_protocol(db, row.id)
-                return _format_protocol_for_telegram(proto)
+                # Telegram-поток: не шлём подробную по-вопросную оценку в чат.
+                # Завершаем опрос автоматически, чтобы без разрыва перейти к кейсам Part 2
+                # (кейсы отправляются внутри complete_examination_session).
+                ex.complete_examination_session(db, row.id, advance_assessment_to_part2=False)
+                from skill_assessment.services.part2_case import on_examination_completed_advance_skill_assessment
+
+                adv = on_examination_completed_advance_skill_assessment(
+                    db,
+                    row,
+                    preferred_chat_id=tid,
+                    send_telegram=False,
+                )
+                part2_notice = adv.get("part2_notice") or {}
+                if part2_notice.get("sent"):
+                    part2_msgs = [str(x) for x in (part2_notice.get("messages") or []) if str(x).strip()]
+                    return [
+                        "Опрос по регламентам завершён. Детальная оценка ответов сохранена в протоколе отчёта (часть 1).",
+                        *part2_msgs,
+                    ]
+                reason = str((adv.get("part2_notice") or {}).get("reason") or adv.get("reason") or "send_failed")
+                return [
+                    "Опрос по регламентам завершён. Детальная оценка ответов сохранена в протоколе отчёта (часть 1).",
+                    "Не удалось сразу доставить кейсы в этот чат (часть 2). "
+                    f"Причина: {reason}. Сообщите HR: «Повторить отправку кейсов».",
+                ]
 
             qnext = ex.get_current_question(db, row.id)
             if qnext:
@@ -307,28 +330,28 @@ def handle_telegram_message(
                 ex.complete_examination_session(db, row.id)
                 # Два сообщения: (1) чтобы первая часть не «терялась» в длинном пузыре; (2) отдельное с кликабельной ссылкой.
                 return [
-                    "Экзамен завершён. Протокол формируется и будет готов примерно через 5 минут.\n\n"
+                    "Опрос по регламентам завершён. Протокол формируется и будет готов примерно через 5 минут.\n\n"
                     "После готовности мы отправим сводку в этот чат, вашему руководителю и в служебный канал "
                     "(если они настроены на сервере).",
-                    "Кадры: полный протокол в браузере — раздел «Оценка навыков», страница «Протоколы экзаменов» "
+                    "Кадры: полный протокол в браузере — раздел «Оценка навыков», страница «Протоколы опросов по регламентам» "
                     "(тот же client_id, что у организации).\n"
                     f"Ссылка для кадров:\n{hr_page}",
                 ]
             if not msg:
                 return [
-                    "Когда закончите просмотр протокола, напишите или скажите голосом «готово», «готов» или «да» — экзамен будет завершён."
+                    "Когда закончите просмотр протокола, напишите или скажите голосом «готово», «готов» или «да» — опрос будет завершён."
                 ]
             return [
-                "Не понял. Чтобы завершить экзамен после просмотра протокола, напишите или скажите голосом «готово», «готов» или «да»."
+                "Не понял. Чтобы завершить опрос после просмотра протокола, напишите или скажите голосом «готово», «готов» или «да»."
             ]
 
         if phase == ExaminationPhase.COMPLETED:
-            return ["Этот экзамен уже завершён. При новом назначении HR откроется новая сессия."]
+            return ["Этот опрос уже завершён. При новом назначении HR откроется новая сессия."]
 
     except HTTPException as e:
         if e.detail == "examination_interrupted_timeout":
             return [
-                "Экзамен прерван по таймауту: между ответами прошло более 5 минут. "
+                "Опрос прерван по таймауту: между ответами прошло более 5 минут. "
                 "Отдел кадров получил уведомление. Для повторной проверки потребуется новое назначение."
             ]
         return [f"Ошибка: {e.detail}"]

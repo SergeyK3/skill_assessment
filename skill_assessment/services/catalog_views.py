@@ -24,6 +24,11 @@ def competency_matrix_row_to_dict(row: CompetencyMatrixRow) -> dict[str, Any]:
     return {
         "row_id": row.id,
         "version_code": version.version_code,
+        "catalog_status": version.status,
+        "catalog_effective_from": version.effective_from.isoformat() if version.effective_from else None,
+        "catalog_effective_to": version.effective_to.isoformat() if version.effective_to else None,
+        "source_regulation_code": version.source_regulation_code,
+        "source_regulation_version_no": version.source_regulation_version_no,
         "position_code": row.position_code,
         "department_code": row.department_code,
         "skill_rank": row.skill_rank,
@@ -39,6 +44,11 @@ def kpi_matrix_row_to_dict(row: KpiMatrixRow) -> dict[str, Any]:
     return {
         "row_id": row.id,
         "version_code": version.version_code,
+        "catalog_status": version.status,
+        "catalog_effective_from": version.effective_from.isoformat() if version.effective_from else None,
+        "catalog_effective_to": version.effective_to.isoformat() if version.effective_to else None,
+        "source_regulation_code": version.source_regulation_code,
+        "source_regulation_version_no": version.source_regulation_version_no,
         "position_code": row.position_code,
         "department_code": row.department_code,
         "kpi_rank": row.kpi_rank,
@@ -51,7 +61,13 @@ def kpi_matrix_row_to_dict(row: KpiMatrixRow) -> dict[str, Any]:
     }
 
 
-def list_competency_matrix_rows(db: Session, *, global_only: bool = False) -> list[dict[str, Any]]:
+def list_competency_matrix_rows(
+    db: Session,
+    *,
+    global_only: bool = False,
+    client_id: str | None = None,
+    version_statuses: tuple[str, ...] | None = ("active",),
+) -> list[dict[str, Any]]:
     stmt = (
         select(
             CompetencyMatrixRow,
@@ -59,8 +75,13 @@ def list_competency_matrix_rows(db: Session, *, global_only: bool = False) -> li
         .join(CompetencyCatalogVersionRow, CompetencyMatrixRow.version_id == CompetencyCatalogVersionRow.id)
         .join(CompetencySkillDefinitionRow, CompetencyMatrixRow.skill_definition_id == CompetencySkillDefinitionRow.id)
     )
-    if global_only:
+    cid = (client_id or "").strip() or None
+    if cid:
+        stmt = stmt.where(CompetencyCatalogVersionRow.client_id == cid)
+    elif global_only:
         stmt = stmt.where(CompetencyCatalogVersionRow.client_id.is_(None))
+    if version_statuses is not None:
+        stmt = stmt.where(CompetencyCatalogVersionRow.status.in_(version_statuses))
     stmt = stmt.order_by(
         CompetencyCatalogVersionRow.version_code,
         CompetencyMatrixRow.position_code,
@@ -71,7 +92,13 @@ def list_competency_matrix_rows(db: Session, *, global_only: bool = False) -> li
     return [competency_matrix_row_to_dict(row) for row in rows]
 
 
-def list_kpi_matrix_rows(db: Session, *, global_only: bool = False) -> list[dict[str, Any]]:
+def list_kpi_matrix_rows(
+    db: Session,
+    *,
+    global_only: bool = False,
+    client_id: str | None = None,
+    version_statuses: tuple[str, ...] | None = ("active",),
+) -> list[dict[str, Any]]:
     stmt = (
         select(
             KpiMatrixRow,
@@ -79,8 +106,13 @@ def list_kpi_matrix_rows(db: Session, *, global_only: bool = False) -> list[dict
         .join(KpiCatalogVersionRow, KpiMatrixRow.version_id == KpiCatalogVersionRow.id)
         .join(KpiDefinitionRow, KpiMatrixRow.kpi_definition_id == KpiDefinitionRow.id)
     )
-    if global_only:
+    cid = (client_id or "").strip() or None
+    if cid:
+        stmt = stmt.where(KpiCatalogVersionRow.client_id == cid)
+    elif global_only:
         stmt = stmt.where(KpiCatalogVersionRow.client_id.is_(None))
+    if version_statuses is not None:
+        stmt = stmt.where(KpiCatalogVersionRow.status.in_(version_statuses))
     stmt = stmt.order_by(
         KpiCatalogVersionRow.version_code,
         KpiMatrixRow.position_code,

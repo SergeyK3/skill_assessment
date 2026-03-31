@@ -81,13 +81,13 @@ def latest_exam_status_label(db: "Session | None", row: AssessmentSessionRow) ->
         if ph == ExaminationPhase.PROTOCOL.value:
             return "Протокол готов"
         if ph == ExaminationPhase.QUESTIONS.value:
-            return "Идёт экзамен"
+            return "Идёт опрос"
         if ph == ExaminationPhase.INTRO.value:
-            return "Экзамен: вступление"
+            return "Опрос: вступление"
         if ph == ExaminationPhase.CONSENT.value:
-            return "Экзамен: согласие"
+            return "Опрос: согласие"
         if ph == ExaminationPhase.BLOCKED_CONSENT.value:
-            return "Экзамен: отказ от согласия"
+            return "Опрос: отказ от согласия"
     return None
 
 

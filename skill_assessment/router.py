@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -19,6 +19,7 @@ from app.db import get_db
 from app.excel_export import xlsx_file_response
 from skill_assessment.domain.entities import (
     AssessmentSession,
+    AssessmentSessionStatus,
     Part1TurnRole,
     Skill,
     SkillAssessmentResult,
@@ -31,6 +32,7 @@ from skill_assessment.schemas.api import (
     CaseTextOut,
     ClassifierImportOut,
     DocsSurveySlotManualUpdate,
+    DocsSurveyTelegramOut,
     ManagerAssessmentPageOut,
     ManagerAssessmentSubmitOut,
     ManagerRatingsBulk,
@@ -59,6 +61,8 @@ from skill_assessment.schemas.api import (
 )
 from skill_assessment.services import assessment_service as svc
 from skill_assessment.services import catalog_views as catalog_views_svc
+from skill_assessment.services import catalog_version_publish as cv_publish_svc
+from skill_assessment.services import regulation_catalog_build as reg_cat_build_svc
 from skill_assessment.services import classifier_import as classifier_import_svc
 from skill_assessment.services import manager_assessment as manager_assessment_svc
 from skill_assessment.services import part1_docs_checklist as part1_docs_svc
@@ -114,6 +118,26 @@ class KpiMatrixPatchBody(BaseModel):
     is_active: bool | None = None
 
 
+class ActivateGlobalCatalogBody(BaseModel):
+    effective_from: date | None = Field(default=None, description="Дата начала действия новой версии (по умолчанию сегодня)")
+    set_replaces_link: bool = True
+
+
+class BuildCatalogFromRegulationsBody(BaseModel):
+    """Сборка новой глобальной версии из актуальных регламентов (черновик по умолчанию)."""
+
+    status: str = Field(default="draft", description="draft | active | archived (лучше draft, затем activate-global)")
+    version_code: str | None = Field(default=None, max_length=64, description="Если не задан — сгенерировать уникальный")
+
+
+class CatalogVersionMetaPatchBody(BaseModel):
+    title: str | None = Field(default=None, max_length=512)
+    notes: str | None = None
+    source_regulation_code: str | None = Field(default=None, max_length=64)
+    source_regulation_version_no: str | None = Field(default=None, max_length=16)
+    status: str | None = Field(default=None, description="draft | active | archived")
+
+
 def _html_response(path: Path, missing_detail: str) -> FileResponse:
     if not path.exists():
         raise HTTPException(status_code=404, detail=missing_detail)
@@ -137,6 +161,26 @@ def _ensure_global_kpi_row(db: Session, row_id: str) -> KpiMatrixRow:
     version = db.get(KpiCatalogVersionRow, row.version_id)
     if version is None or version.client_id is not None:
         raise HTTPException(status_code=400, detail="kpi_matrix_row_not_global")
+    return row
+
+
+def _ensure_client_competency_row(db: Session, row_id: str, client_id: str) -> CompetencyMatrixRow:
+    row = db.get(CompetencyMatrixRow, row_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="competency_matrix_row_not_found")
+    version = db.get(CompetencyCatalogVersionRow, row.version_id)
+    if version is None or version.client_id != client_id:
+        raise HTTPException(status_code=400, detail="competency_matrix_row_not_for_client")
+    return row
+
+
+def _ensure_client_kpi_row(db: Session, row_id: str, client_id: str) -> KpiMatrixRow:
+    row = db.get(KpiMatrixRow, row_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="kpi_matrix_row_not_found")
+    version = db.get(KpiCatalogVersionRow, row.version_id)
+    if version is None or version.client_id != client_id:
+        raise HTTPException(status_code=400, detail="kpi_matrix_row_not_for_client")
     return row
 
 
@@ -304,6 +348,170 @@ def skill_assessment_workspace() -> FileResponse:
     return _html_response(_static / "part3_flow.html", "skill_assessment_part3_static_missing")
 
 
+def _catalog_version_statuses(include_archived_versions: bool) -> tuple[str, ...] | None:
+    """None = без фильтра по статусу версии каталога; иначе только перечисленные."""
+    return None if include_archived_versions else ("active",)
+
+
+@router.get("/catalog/versions/competency", include_in_schema=True)
+def list_competency_catalog_versions(
+    db: Annotated[Session, Depends(get_db)],
+    global_only: Annotated[bool, Query(description="Только глобальные версии (client_id IS NULL)")] = False,
+    client_id: Annotated[str | None, Query(description="Версии локального каталога организации")] = None,
+    status: Annotated[str | None, Query(description="Фильтр: active, archived, draft (одно значение)")] = None,
+) -> list[dict[str, Any]]:
+    st: tuple[str, ...] | None = (status,) if (status or "").strip() else None
+    return cv_publish_svc.list_competency_catalog_versions(
+        db, global_only=global_only, client_id=client_id, status_in=st
+    )
+
+
+@router.get("/catalog/versions/kpi", include_in_schema=True)
+def list_kpi_catalog_versions(
+    db: Annotated[Session, Depends(get_db)],
+    global_only: Annotated[bool, Query()] = False,
+    client_id: Annotated[str | None, Query()] = None,
+    status: Annotated[str | None, Query()] = None,
+) -> list[dict[str, Any]]:
+    st: tuple[str, ...] | None = (status,) if (status or "").strip() else None
+    return cv_publish_svc.list_kpi_catalog_versions(
+        db, global_only=global_only, client_id=client_id, status_in=st
+    )
+
+
+@router.patch("/catalog/versions/competency/{version_id}", include_in_schema=True)
+def patch_competency_catalog_version(
+    version_id: str,
+    body: CatalogVersionMetaPatchBody,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    v = db.get(CompetencyCatalogVersionRow, version_id)
+    if v is None:
+        raise HTTPException(status_code=404, detail="competency_catalog_version_not_found")
+    data = body.model_dump(exclude_unset=True)
+    if "title" in data and data["title"] is not None:
+        v.title = data["title"]
+    if "notes" in data:
+        v.notes = data["notes"]
+    if "source_regulation_code" in data:
+        v.source_regulation_code = data["source_regulation_code"]
+    if "source_regulation_version_no" in data:
+        v.source_regulation_version_no = data["source_regulation_version_no"]
+    if "status" in data and data["status"] is not None:
+        if data["status"] not in ("draft", "active", "archived"):
+            raise HTTPException(status_code=422, detail="invalid_catalog_status")
+        v.status = data["status"]
+    db.commit()
+    db.refresh(v)
+    return cv_publish_svc.competency_catalog_version_to_dict(v)
+
+
+@router.patch("/catalog/versions/kpi/{version_id}", include_in_schema=True)
+def patch_kpi_catalog_version(
+    version_id: str,
+    body: CatalogVersionMetaPatchBody,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    v = db.get(KpiCatalogVersionRow, version_id)
+    if v is None:
+        raise HTTPException(status_code=404, detail="kpi_catalog_version_not_found")
+    data = body.model_dump(exclude_unset=True)
+    if "title" in data and data["title"] is not None:
+        v.title = data["title"]
+    if "notes" in data:
+        v.notes = data["notes"]
+    if "source_regulation_code" in data:
+        v.source_regulation_code = data["source_regulation_code"]
+    if "source_regulation_version_no" in data:
+        v.source_regulation_version_no = data["source_regulation_version_no"]
+    if "status" in data and data["status"] is not None:
+        if data["status"] not in ("draft", "active", "archived"):
+            raise HTTPException(status_code=422, detail="invalid_catalog_status")
+        v.status = data["status"]
+    db.commit()
+    db.refresh(v)
+    return cv_publish_svc.kpi_catalog_version_to_dict(v)
+
+
+@router.post("/catalog/versions/competency/{version_id}/activate-global", include_in_schema=True)
+def activate_global_competency_catalog(
+    version_id: str,
+    body: ActivateGlobalCatalogBody,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    try:
+        out = cv_publish_svc.activate_global_competency_catalog_version(
+            db,
+            version_id,
+            effective_from=body.effective_from,
+            set_replaces_link=body.set_replaces_link,
+        )
+        db.commit()
+        return out
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/catalog/versions/kpi/{version_id}/activate-global", include_in_schema=True)
+def activate_global_kpi_catalog(
+    version_id: str,
+    body: ActivateGlobalCatalogBody,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    try:
+        out = cv_publish_svc.activate_global_kpi_catalog_version(
+            db,
+            version_id,
+            effective_from=body.effective_from,
+            set_replaces_link=body.set_replaces_link,
+        )
+        db.commit()
+        return out
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/catalog/build-from-regulations/competency", include_in_schema=True)
+def post_build_competency_catalog_from_regulations(
+    body: BuildCatalogFromRegulationsBody,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    """
+    Новая глобальная версия матрицы навыков: строки из markdown-таблиц в тексте
+    актуальных глобальных регламентов (поля ckp_full, goal_summary, notes).
+    """
+    try:
+        out = reg_cat_build_svc.build_global_competency_catalog_from_regulations(
+            db,
+            status=body.status,
+            version_code=body.version_code,
+        )
+        db.commit()
+        return out
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/catalog/build-from-regulations/kpi", include_in_schema=True)
+def post_build_kpi_catalog_from_regulations(
+    body: BuildCatalogFromRegulationsBody,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    """Новая глобальная версия матрицы KPI из связей regulation_kpis + kpi_templates."""
+    try:
+        out = reg_cat_build_svc.build_global_kpi_catalog_from_regulations(
+            db,
+            status=body.status,
+            version_code=body.version_code,
+        )
+        db.commit()
+        return out
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @router.get("/catalog/competency-matrix", include_in_schema=True)
 def get_catalog_competency_matrix(
     db: Annotated[Session, Depends(get_db)],
@@ -313,9 +521,27 @@ def get_catalog_competency_matrix(
             description="Только глобальные шаблоны (версия каталога без client_id), без копий организаций",
         ),
     ] = False,
+    client_id: Annotated[
+        str | None,
+        Query(
+            description="Только строки каталога выбранной организации (локальная копия матрицы)",
+        ),
+    ] = None,
+    include_archived_versions: Annotated[
+        bool,
+        Query(
+            description="Включить строки из draft/archived версий каталога (по умолчанию только active)",
+        ),
+    ] = False,
 ) -> list[dict[str, Any]]:
     """Плоская матрица ключевых навыков: версия × должность × подразделение × ранг."""
-    return catalog_views_svc.list_competency_matrix_rows(db, global_only=global_only)
+    cid = (client_id or "").strip() or None
+    return catalog_views_svc.list_competency_matrix_rows(
+        db,
+        global_only=global_only,
+        client_id=cid,
+        version_statuses=_catalog_version_statuses(include_archived_versions),
+    )
 
 
 @router.get("/catalog/competency-matrix/export/excel", include_in_schema=True)
@@ -328,9 +554,21 @@ def export_catalog_competency_matrix_excel(
     skill_code: str = "",
     title: str = "",
     active: bool | None = None,
+    client_id: Annotated[
+        str | None,
+        Query(description="Выгрузка локальной матрицы организации; без параметра — глобальная"),
+    ] = None,
+    include_archived_versions: Annotated[bool, Query()] = False,
 ):
+    cid = (client_id or "").strip() or None
+    source = catalog_views_svc.list_competency_matrix_rows(
+        db,
+        global_only=not bool(cid),
+        client_id=cid,
+        version_statuses=_catalog_version_statuses(include_archived_versions),
+    )
     rows = _filter_competency_export_rows(
-        catalog_views_svc.list_competency_matrix_rows(db, global_only=True),
+        source,
         version=version.strip().lower(),
         position=position.strip().lower(),
         department=department.strip().lower(),
@@ -339,11 +577,16 @@ def export_catalog_competency_matrix_excel(
         title=title.strip().lower(),
         active=active,
     )
+    fn = "local_competency_matrix.xlsx" if cid else "global_competency_matrix.xlsx"
     return xlsx_file_response(
-        download_name="global_competency_matrix.xlsx",
+        download_name=fn,
         sheet_title="skills_matrix",
         headers=[
             "version_code",
+            "catalog_status",
+            "catalog_effective_from",
+            "catalog_effective_to",
+            "source_regulation_code",
             "position_code",
             "department_code",
             "skill_rank",
@@ -354,6 +597,10 @@ def export_catalog_competency_matrix_excel(
         rows=[
             [
                 row.get("version_code"),
+                row.get("catalog_status"),
+                row.get("catalog_effective_from"),
+                row.get("catalog_effective_to"),
+                row.get("source_regulation_code"),
                 row.get("position_code"),
                 row.get("department_code"),
                 row.get("skill_rank"),
@@ -371,8 +618,13 @@ def patch_catalog_competency_matrix_row(
     row_id: str,
     body: CompetencyMatrixPatchBody,
     db: Annotated[Session, Depends(get_db)],
+    client_id: Annotated[
+        str | None,
+        Query(description="Если задан — правка строки локального каталога этой организации"),
+    ] = None,
 ) -> dict[str, Any]:
-    row = _ensure_global_competency_row(db, row_id)
+    cid = (client_id or "").strip() or None
+    row = _ensure_client_competency_row(db, row_id, cid) if cid else _ensure_global_competency_row(db, row_id)
     data = body.model_dump(exclude_unset=True)
     if "position_code" in data:
         row.position_code = data["position_code"]
@@ -404,8 +656,13 @@ def patch_catalog_competency_matrix_row(
 def delete_catalog_competency_matrix_row(
     row_id: str,
     db: Annotated[Session, Depends(get_db)],
+    client_id: Annotated[
+        str | None,
+        Query(description="Если задан — удаление строки локального каталога этой организации"),
+    ] = None,
 ) -> None:
-    row = _ensure_global_competency_row(db, row_id)
+    cid = (client_id or "").strip() or None
+    row = _ensure_client_competency_row(db, row_id, cid) if cid else _ensure_global_competency_row(db, row_id)
     db.delete(row)
     db.commit()
 
@@ -419,9 +676,22 @@ def get_catalog_kpi_matrix(
             description="Только глобальные шаблоны (версия каталога без client_id), без копий организаций",
         ),
     ] = False,
+    client_id: Annotated[
+        str | None,
+        Query(
+            description="Только строки каталога выбранной организации (локальная копия матрицы KPI)",
+        ),
+    ] = None,
+    include_archived_versions: Annotated[bool, Query()] = False,
 ) -> list[dict[str, Any]]:
     """Плоская матрица KPI: версия × должность × подразделение × приоритет (kpi_rank)."""
-    return catalog_views_svc.list_kpi_matrix_rows(db, global_only=global_only)
+    cid = (client_id or "").strip() or None
+    return catalog_views_svc.list_kpi_matrix_rows(
+        db,
+        global_only=global_only,
+        client_id=cid,
+        version_statuses=_catalog_version_statuses(include_archived_versions),
+    )
 
 
 @router.get("/catalog/kpi-matrix/export/excel", include_in_schema=True)
@@ -437,9 +707,21 @@ def export_catalog_kpi_matrix_excel(
     period: str = "",
     target: str = "",
     active: bool | None = None,
+    client_id: Annotated[
+        str | None,
+        Query(description="Выгрузка локальной матрицы KPI организации; без параметра — глобальная"),
+    ] = None,
+    include_archived_versions: Annotated[bool, Query()] = False,
 ):
+    cid = (client_id or "").strip() or None
+    source = catalog_views_svc.list_kpi_matrix_rows(
+        db,
+        global_only=not bool(cid),
+        client_id=cid,
+        version_statuses=_catalog_version_statuses(include_archived_versions),
+    )
     rows = _filter_kpi_export_rows(
-        catalog_views_svc.list_kpi_matrix_rows(db, global_only=True),
+        source,
         version=version.strip().lower(),
         position=position.strip().lower(),
         department=department.strip().lower(),
@@ -451,11 +733,16 @@ def export_catalog_kpi_matrix_excel(
         target=target.strip().lower(),
         active=active,
     )
+    fn = "local_kpi_matrix.xlsx" if cid else "global_kpi_matrix.xlsx"
     return xlsx_file_response(
-        download_name="global_kpi_matrix.xlsx",
+        download_name=fn,
         sheet_title="kpi_matrix",
         headers=[
             "version_code",
+            "catalog_status",
+            "catalog_effective_from",
+            "catalog_effective_to",
+            "source_regulation_code",
             "position_code",
             "department_code",
             "kpi_rank",
@@ -469,6 +756,10 @@ def export_catalog_kpi_matrix_excel(
         rows=[
             [
                 row.get("version_code"),
+                row.get("catalog_status"),
+                row.get("catalog_effective_from"),
+                row.get("catalog_effective_to"),
+                row.get("source_regulation_code"),
                 row.get("position_code"),
                 row.get("department_code"),
                 row.get("kpi_rank"),
@@ -489,8 +780,13 @@ def patch_catalog_kpi_matrix_row(
     row_id: str,
     body: KpiMatrixPatchBody,
     db: Annotated[Session, Depends(get_db)],
+    client_id: Annotated[
+        str | None,
+        Query(description="Если задан — правка строки локального каталога KPI этой организации"),
+    ] = None,
 ) -> dict[str, Any]:
-    row = _ensure_global_kpi_row(db, row_id)
+    cid = (client_id or "").strip() or None
+    row = _ensure_client_kpi_row(db, row_id, cid) if cid else _ensure_global_kpi_row(db, row_id)
     data = body.model_dump(exclude_unset=True)
     if "position_code" in data:
         row.position_code = data["position_code"]
@@ -522,8 +818,13 @@ def patch_catalog_kpi_matrix_row(
 def delete_catalog_kpi_matrix_row(
     row_id: str,
     db: Annotated[Session, Depends(get_db)],
+    client_id: Annotated[
+        str | None,
+        Query(description="Если задан — удаление строки локального каталога KPI этой организации"),
+    ] = None,
 ) -> None:
-    row = _ensure_global_kpi_row(db, row_id)
+    cid = (client_id or "").strip() or None
+    row = _ensure_client_kpi_row(db, row_id, cid) if cid else _ensure_global_kpi_row(db, row_id)
     db.delete(row)
     db.commit()
 
@@ -606,7 +907,7 @@ def get_sessions(
     ),
     q: str | None = Query(default=None, description="Поиск по client_id, id сессии, employee_id (подстрока)"),
     offset: int = Query(default=0, ge=0, le=100_000),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=500),
 ) -> AssessmentSessionListOut:
     items, total = svc.list_sessions(
         db,
@@ -898,16 +1199,59 @@ def skill_assessment_ui_part1_docs_checklist_underscore_alias(request: Request) 
     return RedirectResponse(url=dest, status_code=307)
 
 
+def _docs_survey_telegram_background_enabled() -> bool:
+    return (os.getenv("SKILL_ASSESSMENT_DOCS_SURVEY_TELEGRAM_BACKGROUND") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 @router.post("/sessions/{session_id}/start", response_model=AssessmentSessionStartOut)
 def post_session_start(
     session_id: str,
     db: Annotated[Session, Depends(get_db)],
+    background_tasks: BackgroundTasks,
 ) -> AssessmentSessionStartOut:
     svc.start_session(db, session_id)
-    tg = docs_survey_notify.send_docs_survey_assignment_notice(db, session_id)
-    # После уведомления в Telegram обновляются поля сессии (согласие, chat_id) — отдаём актуальное состояние.
+    if _docs_survey_telegram_background_enabled():
+        background_tasks.add_task(docs_survey_notify.send_docs_survey_assignment_notice_task, session_id)
+        tg = DocsSurveyTelegramOut(
+            queued=True,
+            sent=False,
+            skipped_reason="telegram_send_queued_background",
+        )
+    else:
+        tg = docs_survey_notify.send_docs_survey_assignment_notice(db, session_id)
+    # После синхронной отправки в Telegram обновляются поля сессии; в фоновом режиме поля появятся чуть позже.
     fresh = svc.get_session(db, session_id)
     return AssessmentSessionStartOut(**fresh.model_dump(), docs_survey_telegram=tg)
+
+
+@router.post("/sessions/{session_id}/resend-docs-survey-telegram", response_model=DocsSurveyTelegramOut)
+def post_resend_docs_survey_telegram(
+    session_id: str,
+    db: Annotated[Session, Depends(get_db)],
+    background_tasks: BackgroundTasks,
+) -> DocsSurveyTelegramOut:
+    """
+    Повторно отправить в Telegram то же уведомление, что при старте этапа 1 (опрос по документам + ПДн).
+
+    Нужно, если сотрудник не получил сообщение или сессия «застряла» без вызова /start.
+    Сбрасывает отслеживание согласия ПДн к awaiting_first (как при первой успешной отправке).
+    """
+    snap = svc.get_session(db, session_id)
+    if snap.status in (AssessmentSessionStatus.COMPLETED, AssessmentSessionStatus.CANCELLED):
+        raise HTTPException(status_code=400, detail="session_completed_or_cancelled_no_resend")
+    if _docs_survey_telegram_background_enabled():
+        background_tasks.add_task(docs_survey_notify.send_docs_survey_assignment_notice_task, session_id)
+        return DocsSurveyTelegramOut(
+            queued=True,
+            sent=False,
+            skipped_reason="telegram_send_queued_background",
+        )
+    return docs_survey_notify.send_docs_survey_assignment_notice(db, session_id)
 
 
 @router.post("/sessions/{session_id}/complete", response_model=AssessmentSessionOut)

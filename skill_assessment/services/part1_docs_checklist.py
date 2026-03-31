@@ -17,6 +17,7 @@ from skill_assessment.domain.entities import AssessmentSessionStatus, SessionPha
 from skill_assessment.infrastructure.db_models import AssessmentSessionRow
 from skill_assessment.schemas.api import Part1DocsChecklistOut, Part1DocsChecklistSave, Part1DocsQuestionOut
 from skill_assessment.services.part1_docs_question_plan import build_part1_docs_question_dicts
+from skill_assessment.services.public_url import skill_assessment_public_base_url_for_device_links
 
 # Версия набора вопросов: v3 — 3×регламент + KPI + ключевой навык из матриц каталога.
 PART1_DOCS_VERSION = "v3"
@@ -48,15 +49,15 @@ def get_session_row_by_part1_docs_token(db: Session, token: str) -> AssessmentSe
 
 
 def build_part1_docs_employee_page_absolute_url(db: Session, session_id: str) -> str | None:
-    """Полный URL страницы чек-листа для сотрудника; None без ``SKILL_ASSESSMENT_PUBLIC_BASE_URL``."""
-    base = os.getenv("SKILL_ASSESSMENT_PUBLIC_BASE_URL", "").strip()
+    """Полный URL чек-листа для сотрудника; None без публичного хоста (не localhost — для телефона/Telegram)."""
+    base = skill_assessment_public_base_url_for_device_links()
     if not base:
         return None
     row = db.get(AssessmentSessionRow, session_id)
     if row is None:
         return None
     tok = ensure_part1_docs_access_token(db, row)
-    return f"{base.rstrip('/')}{PART1_DOCS_EMPLOYEE_UI_PATH}?token={tok}"
+    return f"{base}{PART1_DOCS_EMPLOYEE_UI_PATH}?token={tok}"
 
 
 def telegram_part1_docs_checklist_message_line(db: Session, session_id: str) -> str | None:
@@ -173,6 +174,7 @@ def save_part1_docs_checklist(db: Session, session_id: str, body: Part1DocsCheck
     payload["answers"] = cur_answers
     payload["version"] = PART1_DOCS_VERSION
 
+    transitioned_part1_to_part2 = False
     if body.complete:
         req = _required_ids_for_session(db, row)
         missing = req - frozenset(cur_answers.keys())
@@ -186,11 +188,12 @@ def save_part1_docs_checklist(db: Session, session_id: str, body: Part1DocsCheck
         ph = getattr(row, "phase", None) or SessionPhase.DRAFT.value
         if ph == SessionPhase.PART1.value:
             row.phase = SessionPhase.PART2.value
+            transitioned_part1_to_part2 = True
 
     row.part1_docs_checklist_json = _dump_payload(payload)
     db.commit()
     db.refresh(row)
-    if body.complete and not was_completed and bool(payload.get("completed")):
+    if body.complete and not was_completed and bool(payload.get("completed")) and transitioned_part1_to_part2:
         try:
             from skill_assessment.services import part2_case as part2_case_svc
 

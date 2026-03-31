@@ -86,6 +86,8 @@ class AssessmentSessionRow(Base, TimestampMixin):
     manager_access_token: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True, index=True)
     #: Когда руководителю уже отправили ссылку на оценку в Telegram.
     manager_assessment_notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    #: Общий комментарий руководителя по сотруднику/сессии (Part 3).
+    manager_overall_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     results: Mapped[list[SkillAssessmentResultRow]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
@@ -190,6 +192,25 @@ class ExaminationTelegramBindingRow(Base, TimestampMixin):
     employee_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
 
 
+class TelegramProcessContextRow(Base, TimestampMixin):
+    """
+    Контекст оркестрации Telegram: какой бизнес-поток сейчас активен для chat_id.
+
+    Нужен, чтобы сообщения не «перехватывались» соседним сценарием при параллельных этапах.
+    """
+
+    __tablename__ = "sa_telegram_process_context"
+    __table_args__ = (UniqueConstraint("telegram_chat_id", name="uq_sa_tg_process_chat"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    telegram_chat_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    client_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    employee_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    #: exam | part2_cases | idle
+    active_flow: Mapped[str] = mapped_column(String(32), nullable=False, default="idle", index=True)
+    active_session_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+
+
 class ExaminationAnswerRow(Base):
     """Ответ по вопросу (в протоколе — текст / транскрипт)."""
 
@@ -221,6 +242,15 @@ class CompetencyCatalogVersionRow(Base, TimestampMixin):
     effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Якорь к глобальному регламенту (опционально): трассировка «матрица из регламента v2».
+    source_regulation_code: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    source_regulation_version_no: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    #: Предыдущая версия каталога (после publish/activate).
+    replaces_version_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("sa_competency_catalog_versions.id"), nullable=True, index=True
+    )
+    #: Когда версия опубликована (переведена в active).
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     matrix_rows: Mapped[list["CompetencyMatrixRow"]] = relationship(
         back_populates="catalog_version", cascade="all, delete-orphan"
@@ -295,6 +325,12 @@ class KpiCatalogVersionRow(Base, TimestampMixin):
     effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_regulation_code: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    source_regulation_version_no: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    replaces_version_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("sa_kpi_catalog_versions.id"), nullable=True, index=True
+    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     matrix_rows: Mapped[list["KpiMatrixRow"]] = relationship(
         back_populates="catalog_version", cascade="all, delete-orphan"

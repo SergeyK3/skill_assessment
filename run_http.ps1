@@ -18,4 +18,9 @@ if (-not (Test-Path ".venv\Scripts\Activate.ps1")) {
 & .\.venv\Scripts\Activate.ps1
 pip install -e $SkillPkgRoot -q
 Write-Host "Uvicorn: skill_assessment.runner:app (cwd=$CoreRoot)"
-uvicorn skill_assessment.runner:app --host 0.0.0.0 --port 8000 --reload
+# Явные каталоги reload: иначе при cwd=ядро правки только в пакете skill_assessment не перезапускают процесс (и наоборот).
+$reloadSkill = (Resolve-Path $SkillPkgRoot).Path
+$reloadApp = Join-Path $CoreRoot "app"
+$reloadArgs = @("--reload-dir", $reloadSkill)
+if (Test-Path $reloadApp) { $reloadArgs += @("--reload-dir", $reloadApp) }
+uvicorn skill_assessment.runner:app --host 0.0.0.0 --port 8000 --reload @reloadArgs

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -79,21 +80,65 @@ class HttpxTelegramOutbound:
     ) -> TelegramOutboundResult:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         try:
-            r = httpx.post(
-                url,
-                json={"chat_id": chat_id, "text": text, "reply_markup": reply_markup},
-                timeout=20.0,
-            )
-            data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
-            if not r.is_success:
-                detail = data.get("description") if isinstance(data, dict) else r.text[:300]
-                return TelegramOutboundResult(ok=False, http_status=r.status_code, description=str(detail))
-            if isinstance(data, dict) and data.get("ok"):
-                return TelegramOutboundResult(ok=True, http_status=r.status_code, description=None)
-            return TelegramOutboundResult(ok=False, http_status=r.status_code, description=str(data)[:400])
-        except Exception as e:
-            _log.exception("telegram httpx send failed")
-            return TelegramOutboundResult(ok=False, http_status=None, description=str(e)[:200])
+            timeout_sec = float((os.getenv("TELEGRAM_HTTP_TIMEOUT_SECONDS") or "45").strip() or "45")
+        except ValueError:
+            timeout_sec = 45.0
+        try:
+            max_attempts = max(1, min(8, int((os.getenv("TELEGRAM_SEND_MAX_ATTEMPTS") or "3").strip() or "3")))
+        except ValueError:
+            max_attempts = 3
+
+        payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
+        # Telegram Bot API ожидает объект в reply_markup; null даёт 400 "object expected as reply markup".
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        last_err: str | None = None
+        last_status: int | None = None
+
+        for attempt in range(max_attempts):
+            try:
+                r = httpx.post(url, json=payload, timeout=timeout_sec)
+                data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+                last_status = r.status_code
+                if r.status_code in (429, 500, 502, 503, 504) and attempt + 1 < max_attempts:
+                    detail = data.get("description") if isinstance(data, dict) else r.text[:200]
+                    last_err = str(detail) if detail else f"http_{r.status_code}"
+                    wait = min(8.0, 1.5 * (2**attempt))
+                    _log.warning(
+                        "telegram sendMessage transient %s (attempt %s/%s), retry in %.1fs",
+                        r.status_code,
+                        attempt + 1,
+                        max_attempts,
+                        wait,
+                    )
+                    time.sleep(wait)
+                    continue
+                if not r.is_success:
+                    detail = data.get("description") if isinstance(data, dict) else r.text[:300]
+                    return TelegramOutboundResult(ok=False, http_status=r.status_code, description=str(detail))
+                if isinstance(data, dict) and data.get("ok"):
+                    return TelegramOutboundResult(ok=True, http_status=r.status_code, description=None)
+                return TelegramOutboundResult(ok=False, http_status=r.status_code, description=str(data)[:400])
+            except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError, httpx.WriteError) as e:
+                last_err = str(e)[:200]
+                if attempt + 1 < max_attempts:
+                    wait = min(8.0, 1.5 * (2**attempt))
+                    _log.warning(
+                        "telegram sendMessage network error (attempt %s/%s): %s; retry in %.1fs",
+                        attempt + 1,
+                        max_attempts,
+                        last_err,
+                        wait,
+                    )
+                    time.sleep(wait)
+                    continue
+                _log.exception("telegram httpx send failed after %s attempts", max_attempts)
+                return TelegramOutboundResult(ok=False, http_status=last_status, description=last_err)
+            except Exception as e:
+                _log.exception("telegram httpx send failed")
+                return TelegramOutboundResult(ok=False, http_status=last_status, description=str(e)[:200])
+
+        return TelegramOutboundResult(ok=False, http_status=last_status, description=last_err or "send_failed")
 
 
 def get_telegram_outbound() -> FakeTelegramOutbound | HttpxTelegramOutbound:
