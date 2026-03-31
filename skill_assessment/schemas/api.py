@@ -71,6 +71,10 @@ class AssessmentSessionOut(BaseModel):
     manager_assessment_deadline_label: str | None = None
     #: Когда ссылка на оценку руководителю уже ушла в Telegram.
     manager_assessment_notified_at: datetime | None = None
+    #: Публичная ссылка на страницу оценки руководителя (если этап открыт).
+    manager_assessment_url: str | None = None
+    #: Общий комментарий руководителя по сотруднику (Part 3).
+    manager_overall_comment: str | None = None
 
     model_config = {"from_attributes": False}
 
@@ -128,7 +132,13 @@ class DocsSurveyTelegramOut(BaseModel):
     """Результат отправки уведомления об опросе по документам (POST /sessions/{id}/start)."""
 
     sent: bool = False
+    queued: bool = Field(
+        default=False,
+        description="True — отправка в Telegram поставлена в фон (SKILL_ASSESSMENT_DOCS_SURVEY_TELEGRAM_BACKGROUND); итог в логах",
+    )
     chat_id: str | None = None
+    #: True — не было привязки/telegram у сотрудника, использован TELEGRAM_DOCS_SURVEY_FALLBACK_CHAT_ID (сотрудник может не видеть чат).
+    used_fallback_chat: bool = False
     skipped_reason: str | None = Field(
         default=None,
         description="no_bot_token | session_not_found | no_chat_id | ошибка Telegram API",
@@ -288,12 +298,14 @@ class ManagerRatingItem(BaseModel):
 
 class ManagerRatingsBulk(BaseModel):
     ratings: list[ManagerRatingItem] = Field(default_factory=list)
+    overall_comment: str | None = Field(default=None, max_length=5000)
 
 
 class ManagerAssessmentSkillOut(BaseModel):
     skill_id: str
     skill_code: str
     skill_title: str
+    skill_rank: int | None = None
     is_active: bool = True
     current_level: ProficiencyLevel | None = None
     #: Сохранённый комментарий руководителя (без служебных заглушек).
@@ -305,11 +317,15 @@ class ManagerAssessmentPageOut(BaseModel):
     session_id: str
     employee_label: str | None = None
     employee_position_label: str | None = None
+    employee_department_label: str | None = None
     stage_title: str = "оценка руководителем"
     deadline_at: datetime | None = None
     deadline_label: str | None = None
     part2_summary: str | None = None
     kpi_summary: str | None = None
+    report_url: str | None = None
+    report_path: str | None = None
+    overall_comment: str | None = None
     can_submit: bool = True
     skills: list[ManagerAssessmentSkillOut] = Field(default_factory=list)
 
@@ -404,6 +420,20 @@ class SkillEvaluationReferenceRowOut(BaseModel):
     aggregate_level_0_3: float
     #: Тот же итог в процентах от максимума 3.
     aggregate_pct_0_100: int
+    #: Когда сессия была завершена; если не завершена — ``None``.
+    session_completed_at: datetime | None = None
+    #: Последнее изменение сессии (fallback для активных/черновых записей).
+    session_updated_at: datetime | None = None
+    #: Когда сессия была создана.
+    session_created_at: datetime | None = None
+
+    @field_serializer("session_completed_at", "session_updated_at", "session_created_at")
+    def _serialize_reference_session_datetimes(self, v: datetime | None) -> str | None:
+        if v is None:
+            return None
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+        return v.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class SkillEvaluationReferenceListOut(BaseModel):
@@ -451,6 +481,12 @@ class ReportEmployeeHeaderOut(BaseModel):
     department_code: str | None = None
 
 
+class ReportPart1ExamItemOut(BaseModel):
+    question_text: str
+    transcript_text: str
+    score_percent: float | None = None
+
+
 class SessionReportPublicOut(BaseModel):
     session: PublicReportSessionOut
     generated_at: datetime
@@ -463,8 +499,10 @@ class SessionReportPublicOut(BaseModel):
     #: Метки KPI из ядра HR (регламент / экзаменационные вопросы); при отсутствии ядра — пусто.
     report_examination_kpi_codes: list[str] = Field(default_factory=list)
     part1_summary: str = "не проводилось (Part 1 — голос/STT позже)"
+    part1_exam_score_4: float | None = None
     part1_overall_level: int | None = None
     part1_overall_pct: int | None = None
+    part1_exam_items: list[ReportPart1ExamItemOut] = Field(default_factory=list)
     part1_turns: list[Part1TurnOut] = Field(default_factory=list)
     part2_summary: str = "кейс: см. evidence_case или заглушку Part 2"
     part2_case_count: int = 0

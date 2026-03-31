@@ -17,7 +17,12 @@ from skill_assessment.infrastructure.db_models import (
     AssessmentSessionRow,
     SkillAssessmentResultRow,
 )
-from skill_assessment.integration.hr_core import employee_display_label, get_employee, get_examination_kpi_labels
+from skill_assessment.integration.hr_core import (
+    department_function_code_label_ru,
+    employee_display_label,
+    get_employee,
+    get_examination_kpi_labels,
+)
 from skill_assessment.schemas.api import (
     ManagerAssessmentPageOut,
     ManagerAssessmentSkillOut,
@@ -28,6 +33,7 @@ from skill_assessment.schemas.api import (
 from skill_assessment.services import assessment_service as assessment_svc
 from skill_assessment.services.exam_protocol_recipients import resolve_manager_telegram_chat_for_protocol
 from skill_assessment.services.examination_question_plan import compose_examination_question_plan
+from skill_assessment.services.public_url import skill_assessment_public_base_url_for_device_links
 from skill_assessment.services.session_competency_matrix import (
     ensure_mirrored_skill,
     find_mirrored_skill,
@@ -58,8 +64,11 @@ def build_manager_assessment_page_path(token: str) -> str:
     return MANAGER_ASSESSMENT_UI_PATH + "?" + urlencode({"token": token})
 
 
-def build_manager_assessment_absolute_url(db: Session, session_id: str) -> str:
-    base = (os.getenv("SKILL_ASSESSMENT_PUBLIC_BASE_URL") or "http://127.0.0.1:8000").strip().rstrip("/")
+def build_manager_assessment_absolute_url(db: Session, session_id: str) -> str | None:
+    """Полный URL страницы оценки руководителя; None если нет публичного хоста (не localhost — для Telegram)."""
+    base = skill_assessment_public_base_url_for_device_links()
+    if not base:
+        return None
     row = _resolve_session_row(db, session_id)
     token = assessment_svc.ensure_manager_access_token(db, row)
     return base + build_manager_assessment_page_path(token)
@@ -149,6 +158,7 @@ def _skills_with_current_manager_levels(
                 skill_id=item.public_skill_id,
                 skill_code=item.skill_code,
                 skill_title=item.skill_title,
+                skill_rank=item.skill_rank,
                 is_active=item.is_active,
                 current_level=current_level,
                 manager_comment=manager_comment,
@@ -196,16 +206,27 @@ def get_manager_assessment_page(db: Session, token: str) -> ManagerAssessmentPag
     emp = get_employee(db, row.client_id, row.employee_id)
     employee_label = employee_display_label(emp) or row.employee_id or "—"
     position = (emp.position_label or "").strip() if emp and emp.position_label else "—"
+    department = department_function_code_label_ru(getattr(emp, "department_code", None)) or "—"
     kpi_hint = _kpi_summary(db, row)
     skills = _skills_with_current_manager_levels(db, row, kpi_hint)
+    from skill_assessment.services import part2_case as part2_case_svc
+
+    report_url = part2_case_svc.build_public_report_absolute_url(db, row.id)
+    report_path = None
+    if getattr(row, "part1_docs_access_token", None):
+        report_path = part2_case_svc.build_public_report_path(str(row.part1_docs_access_token))
     return ManagerAssessmentPageOut(
         session_id=row.id,
         employee_label=employee_label,
         employee_position_label=position,
+        employee_department_label=department,
         deadline_at=assessment_svc.manager_assessment_deadline_aware_utc(row),
         deadline_label=assessment_svc.manager_assessment_deadline_label(row),
         part2_summary=_part2_summary(row),
         kpi_summary=kpi_hint,
+        report_url=report_url,
+        report_path=report_path,
+        overall_comment=(getattr(row, "manager_overall_comment", None) or None),
         can_submit=row.status != AssessmentSessionStatus.COMPLETED.value and bool(skills),
         skills=skills,
     )
@@ -216,6 +237,9 @@ def submit_manager_assessment_by_token(db: Session, token: str, body: ManagerRat
     if row.status == AssessmentSessionStatus.COMPLETED.value:
         raise HTTPException(status_code=400, detail="manager_assessment_already_completed")
     translated = _translate_matrix_ratings_to_skill_ratings(db, row, body)
+    row.manager_overall_comment = (body.overall_comment or "").strip() or None
+    db.commit()
+    db.refresh(row)
     saved = assessment_svc.save_manager_ratings(db, row.id, translated)
     fresh = assessment_svc.complete_session(db, row.id)
     try:
@@ -249,23 +273,27 @@ def send_manager_assessment_ready_notice(db: Session, session_id: str) -> dict[s
     emp = get_employee(db, row.client_id, row.employee_id)
     employee_label = employee_display_label(emp) or row.employee_id or "—"
     position = (emp.position_label or "").strip() if emp and emp.position_label else "—"
+    department = department_function_code_label_ru(getattr(emp, "department_code", None)) or "—"
     url = build_manager_assessment_absolute_url(db, row.id)
     deadline = assessment_svc.manager_assessment_deadline_label(row) or "не задан"
     kpi_lines = _kpi_lines(db, row)
     lines = [
         f"Нужно оценить сотрудника: {employee_label}",
         f"Должность: {position}",
+        f"Подразделение: {department}",
         "Этап: оценка руководителем",
         f"Дедлайн оценки: {deadline}",
     ]
     if kpi_lines:
         lines.append("KPI:")
         lines.extend([f"- {item}" for item in kpi_lines])
-    lines.extend(
-        [
-        f"Открыть страницу: {url}",
-        ]
-    )
+    if url:
+        lines.append(f"Открыть страницу: {url}")
+    else:
+        lines.append(
+            "Ссылку на страницу оценки откройте из интерфейса HR "
+            "(в Telegram нужен публичный SKILL_ASSESSMENT_PUBLIC_BASE_URL с HTTPS, не 127.0.0.1)."
+        )
     send_token = token_env if token_env else "mock_token_for_tests"
     outbound = get_telegram_outbound()
     result = outbound.send_message(

@@ -65,12 +65,20 @@ def test_taxonomy_sessions_results_flow() -> None:
         assert r.status_code == 200
         case = r.json()
         assert case["source"] in {"template", "llm"}
-        assert skill_id == case["skill_id"]
+        case_skill_id = case["skill_id"]
         assert len(case["text"]) > 20
 
         r = client.post(
             f"/api/skill-assessment/sessions/{session_id}/manager-ratings",
-            json={"ratings": [{"skill_id": skill_id, "level": 2}]},
+            json={
+                "ratings": [
+                    {
+                        "skill_id": case_skill_id,
+                        "level": 2,
+                        "comment": "Краткая оценка руководителя для сквозного теста.",
+                    }
+                ]
+            },
         )
         assert r.status_code == 200
         assert r.json()[0]["level"] == 2
@@ -79,9 +87,10 @@ def test_taxonomy_sessions_results_flow() -> None:
         r = client.get(f"/api/skill-assessment/sessions/{session_id}")
         assert r.json()["phase"] == "part3"
 
+        other_skill_id = next(s["id"] for s in skills if s["id"] != case_skill_id)
         r = client.post(
             f"/api/skill-assessment/sessions/{session_id}/results",
-            json={"skill_id": skill2_id, "level": 2, "evidence_notes": {"case": "Ответил по кейсу"}},
+            json={"skill_id": other_skill_id, "level": 2, "evidence_notes": {"case": "Ответил по кейсу"}},
         )
         assert r.status_code == 200
         assert r.json()["level"] == 2
@@ -715,7 +724,10 @@ def test_public_manager_assessment_by_token_after_part2_complete(monkeypatch: py
             ]
             r = client.post(
                 "/api/skill-assessment/public/manager-assessment?token=" + manager_token,
-                json={"ratings": ratings},
+                json={
+                    "ratings": ratings,
+                    "overall_comment": "Общий комментарий руководителя по сотруднику для итогового протокола.",
+                },
             )
             assert r.status_code == 200
             saved = r.json()
@@ -730,7 +742,18 @@ def test_public_manager_assessment_by_token_after_part2_complete(monkeypatch: py
                 row.get("evidence_manager") == "Тестовый комментарий руководителя по навыку для отчёта."
                 for row in rep.get("rows", [])
             )
+            assert rep["session"]["manager_overall_comment"] == "Общий комментарий руководителя по сотруднику для итогового протокола."
             assert "Оценка руководителя" not in json.dumps(rep, ensure_ascii=False)
+
+            r = client.get(f"/api/skill-assessment/sessions/{session_id}/report/html")
+            assert r.status_code == 200
+            html = r.text
+            assert "<th>Комментарий</th>" not in html
+            assert "Общий комментарий руководителя" in html
+            assert "Обоснование оценки:" in html
+            assert "Сводка по процентной шкале" in html
+            for item in active_skills:
+                assert item["skill_code"] not in html
 
             r = client.get(f"/api/skill-assessment/sessions/{session_id}")
             assert r.status_code == 200
@@ -742,6 +765,100 @@ def test_public_manager_assessment_by_token_after_part2_complete(monkeypatch: py
                 if row is not None:
                     row.is_active = True
                     db.commit()
+
+
+def test_report_html_uses_completed_exam_for_part1_summary() -> None:
+    from skill_assessment.runner import app
+
+    with TestClient(app) as client:
+        r = client.get("/api/skill-assessment/taxonomy/domains")
+        assert r.status_code == 200
+        domain_id = r.json()[0]["id"]
+        r = client.get(f"/api/skill-assessment/taxonomy/skills?domain_id={domain_id}")
+        assert r.status_code == 200
+        skills = r.json()
+        assert len(skills) >= 2
+        skill_id = skills[0]["id"]
+
+        suffix = uuid.uuid4().hex[:8]
+        client_id = "c_exam_part1_" + suffix
+        employee_id = "e_exam_part1_" + suffix
+
+        r = client.post(
+            "/api/skill-assessment/sessions",
+            json={"client_id": client_id, "employee_id": employee_id},
+        )
+        assert r.status_code == 200
+        session_id = r.json()["id"]
+
+        r = client.post(f"/api/skill-assessment/sessions/{session_id}/start")
+        assert r.status_code == 200
+
+        r = client.post(
+            "/api/skill-assessment/examination/sessions",
+            json={"client_id": client_id, "employee_id": employee_id, "scenario_id": "regulation_v1"},
+        )
+        assert r.status_code == 200
+        exam_id = r.json()["id"]
+
+        r = client.post(f"/api/skill-assessment/examination/sessions/{exam_id}/consent", json={"accepted": True})
+        assert r.status_code == 200
+        r = client.post(f"/api/skill-assessment/examination/sessions/{exam_id}/intro/done")
+        assert r.status_code == 200
+        for i in range(5):
+            r = client.post(
+                f"/api/skill-assessment/examination/sessions/{exam_id}/answer",
+                json={"transcript_text": f"Подробный ответ сотрудника на вопрос {i} по регламентам и KPI."},
+            )
+            assert r.status_code == 200
+        r = client.post(f"/api/skill-assessment/examination/sessions/{exam_id}/complete")
+        assert r.status_code == 200
+
+        r = client.get(f"/api/skill-assessment/sessions/{session_id}/case?skill_id={skill_id}")
+        assert r.status_code == 200
+        case = r.json()
+        case_skill_id = case["skill_id"]
+
+        r = client.post(
+            f"/api/skill-assessment/sessions/{session_id}/results",
+            json={"skill_id": case_skill_id, "level": 2, "evidence_notes": {"case": "Ответ по кейсу для протокола."}},
+        )
+        assert r.status_code == 200
+        r = client.post(
+            f"/api/skill-assessment/sessions/{session_id}/manager-ratings",
+            json={
+                "ratings": [
+                    {
+                        "skill_id": case_skill_id,
+                        "level": 3,
+                        "comment": "Комментарий руководителя для отдельного API.",
+                    }
+                ],
+                "overall_comment": "Итоговый комментарий руководителя.",
+            },
+        )
+        assert r.status_code == 200
+        r = client.post(f"/api/skill-assessment/sessions/{session_id}/complete")
+        assert r.status_code == 200
+
+        r = client.get(f"/api/skill-assessment/sessions/{session_id}/report")
+        assert r.status_code == 200
+        rep = r.json()
+        assert rep["part1_exam_score_4"] is not None
+        assert rep["part1_overall_pct"] is not None
+        assert "Опрос по регламентам" in rep["part1_summary"]
+
+        r = client.get(f"/api/skill-assessment/sessions/{session_id}/report/html")
+        assert r.status_code == 200
+        html = r.text
+        assert "Часть 1 — опрос по регламентам" in html
+        assert "Итоговая оценка Part 1:" in html
+        assert "/4</strong>" in html
+        assert "Итог Part 1 пока не рассчитан." not in html
+        assert "Сводка по процентной шкале" in html
+        assert "Вопрос 1:" in html
+        assert "Подробный ответ сотрудника на вопрос 0 по регламентам и KPI." in html
+        assert "Оценка ответа:" in html
 
 
 def test_part2_payload_normalizes_legacy_shape() -> None:

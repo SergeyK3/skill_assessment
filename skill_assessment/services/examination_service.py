@@ -17,6 +17,7 @@ from skill_assessment.domain.examination_entities import (
     ExaminationPhase,
     ExaminationSessionStatus,
 )
+from skill_assessment.domain.entities import AssessmentSessionStatus, SessionPhase
 from skill_assessment.integration.hr_core import (
     employee_display_label,
     get_employee,
@@ -31,6 +32,7 @@ from skill_assessment.services.examination_protocol_scores import (
 from skill_assessment.services.stt_service import is_stt_mock_transcript
 from skill_assessment.services.examination_question_plan import compose_examination_question_plan
 from skill_assessment.infrastructure.db_models import (
+    AssessmentSessionRow,
     ExaminationAnswerRow,
     ExaminationQuestionRow,
     ExaminationSessionRow,
@@ -60,6 +62,39 @@ def _answer_timeout_minutes() -> int:
 
 
 _EXAM_ANSWER_TIMEOUT_MINUTES = _answer_timeout_minutes()
+
+
+def _cancel_latest_part1_assessment_session_for_pair(db: Session, client_id: str, employee_id: str) -> bool:
+    """Fail-fast: если Part1 сорван, блокируем переходы в Part2/Part3 для этой пары."""
+    cid = (client_id or "").strip()
+    eid = (employee_id or "").strip()
+    if not cid or not eid:
+        return False
+    sa_row = db.scalar(
+        select(AssessmentSessionRow)
+        .where(
+            AssessmentSessionRow.client_id == cid,
+            AssessmentSessionRow.employee_id == eid,
+            AssessmentSessionRow.phase == SessionPhase.PART1.value,
+            AssessmentSessionRow.status.in_(
+                (
+                    AssessmentSessionStatus.DRAFT.value,
+                    AssessmentSessionStatus.IN_PROGRESS.value,
+                )
+            ),
+        )
+        .order_by(AssessmentSessionRow.updated_at.desc())
+        .limit(1)
+    )
+    if sa_row is None:
+        return False
+    sa_row.status = AssessmentSessionStatus.CANCELLED.value
+    sa_row.phase = SessionPhase.PART1.value
+    sa_row.completed_at = datetime.now(timezone.utc)
+    sa_row.docs_survey_exam_gate_awaiting = False
+    db.commit()
+    db.refresh(sa_row)
+    return True
 
 
 def _org_unit_display_name(db: Session, client_id: str, org_unit_id: str | None) -> str | None:
@@ -199,6 +234,7 @@ def _interrupt_for_answer_timeout(
     row.completed_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
+    _cancel_latest_part1_assessment_session_for_pair(db, row.client_id, row.employee_id)
     if notify_hr:
         try:
             from skill_assessment.services.examination_regulation_notify import (
@@ -224,7 +260,7 @@ def ensure_not_answer_timed_out(db: Session, row: ExaminationSessionRow, *, noti
 def seed_session_questions_from_hr(db: Session, row: ExaminationSessionRow) -> None:
     if row.question_scenario_id:
         return
-    texts = compose_examination_question_plan(db, row.client_id, row.employee_id)
+    texts = compose_examination_question_plan(db, row.client_id, row.employee_id, seed_key=row.id)
     if texts is None:
         return
     if len(texts) == 0:
@@ -262,6 +298,48 @@ def _ordered_questions_for_row(db: Session, row: ExaminationSessionRow) -> list[
     if ExaminationPhase(row.phase) in (ExaminationPhase.BLOCKED_NO_REGULATION, ExaminationPhase.INTERRUPTED_TIMEOUT):
         return []
     return _ordered_questions(db, _question_scenario_id(row))
+
+
+def _find_related_assessment_session(db: Session, exam_row: ExaminationSessionRow) -> AssessmentSessionRow | None:
+    return db.scalar(
+        select(AssessmentSessionRow)
+        .where(
+            AssessmentSessionRow.client_id == exam_row.client_id,
+            AssessmentSessionRow.employee_id == exam_row.employee_id,
+            AssessmentSessionRow.status != AssessmentSessionStatus.CANCELLED.value,
+        )
+        .order_by(AssessmentSessionRow.updated_at.desc())
+        .limit(1)
+    )
+
+
+def _related_assessment_protocol_context(
+    db: Session, exam_row: ExaminationSessionRow
+) -> tuple[str | None, str | None, str | None, str | None, str | None, str | None]:
+    sa_row = _find_related_assessment_session(db, exam_row)
+    if sa_row is None:
+        return (None, None, None, None, None, None)
+    report_url = None
+    report_path = None
+    part2_summary = None
+    try:
+        from skill_assessment.services import part2_case as part2_case_svc
+        from skill_assessment.services import part1_docs_checklist as part1_docs_svc
+
+        report_url = part2_case_svc.build_public_report_absolute_url(db, sa_row.id)
+        token = getattr(sa_row, "part1_docs_access_token", None) or part1_docs_svc.ensure_part1_docs_access_token(db, sa_row)
+        report_path = part2_case_svc.build_public_report_path(token)
+        part2_summary = part2_case_svc.get_part2_summary(sa_row)
+    except Exception:
+        _log.debug("examination: failed to build related assessment protocol context", exc_info=True)
+    return (
+        sa_row.id,
+        getattr(sa_row, "phase", None),
+        getattr(sa_row, "status", None),
+        report_url,
+        report_path,
+        part2_summary,
+    )
 
 
 def _session_out(db: Session, row: ExaminationSessionRow, *, include_access_token: bool = False) -> ExaminationSessionOut:
@@ -391,14 +469,30 @@ def get_or_create_active_examination_session(db: Session, client_id: str, employ
         .where(
             ExaminationSessionRow.client_id == client_id,
             ExaminationSessionRow.employee_id == employee_id,
-            ExaminationSessionRow.status != ExaminationSessionStatus.COMPLETED.value,
+            ExaminationSessionRow.status.in_(
+                (
+                    ExaminationSessionStatus.SCHEDULED.value,
+                    ExaminationSessionStatus.IN_PROGRESS.value,
+                )
+            ),
         )
         .order_by(ExaminationSessionRow.created_at.desc())
     )
     row = db.scalars(q).first()
     if row is not None:
         ensure_not_answer_timed_out(db, row)
-        return row
+        # Если найденная «активная» сессия прямо сейчас перешла в interrupted_timeout
+        # (или стала неактивной), не возвращаем её: новая назначенная проверка должна
+        # стартовать с новой сессии, а не застревать в старом таймауте.
+        try:
+            ph = ExaminationPhase(row.phase)
+        except ValueError:
+            ph = None
+        if (
+            row.status in (ExaminationSessionStatus.SCHEDULED.value, ExaminationSessionStatus.IN_PROGRESS.value)
+            and ph != ExaminationPhase.INTERRUPTED_TIMEOUT
+        ):
+            return row
     row = _insert_examination_session_row(
         db,
         client_id=client_id,
@@ -532,6 +626,7 @@ def post_consent(db: Session, session_id: str, body: ExaminationConsentBody) -> 
         row.needs_hr_release = True
         db.commit()
         db.refresh(row)
+        _cancel_latest_part1_assessment_session_for_pair(db, row.client_id, row.employee_id)
         return _session_out(db, row)
     row.consent_status = ConsentStatus.ACCEPTED.value
     row.phase = ExaminationPhase.INTRO.value
@@ -696,6 +791,15 @@ def build_protocol(db: Session, session_id: str) -> ExaminationProtocolOut:
         evaluated_at = now
         evaluation_is_preliminary = True
 
+    (
+        related_assessment_session_id,
+        related_assessment_phase,
+        related_assessment_status,
+        related_report_url,
+        related_report_path,
+        part2_summary,
+    ) = _related_assessment_protocol_context(db, row)
+
     return ExaminationProtocolOut(
         session_id=row.id,
         scenario_id=row.scenario_id,
@@ -713,6 +817,12 @@ def build_protocol(db: Session, session_id: str) -> ExaminationProtocolOut:
         evaluated_at=evaluated_at,
         evaluation_is_preliminary=evaluation_is_preliminary,
         scoring_note="",
+        related_assessment_session_id=related_assessment_session_id,
+        related_assessment_phase=related_assessment_phase,
+        related_assessment_status=related_assessment_status,
+        related_report_url=related_report_url,
+        related_report_path=related_report_path,
+        part2_summary=part2_summary,
     )
 
 
@@ -795,6 +905,30 @@ def render_examination_protocol_html(proto: ExaminationProtocolOut) -> str:
             f"{note_html}"
             "</section>"
         )
+    if proto.related_assessment_session_id:
+        report_href = proto.related_report_url or proto.related_report_path
+        report_link_html = (
+            f'<p class="sub" style="margin-top:0.55rem;">Общий протокол оценки: '
+            f'<a href="{he(report_href)}" target="_blank" rel="noopener">{he(report_href)}</a></p>'
+            if report_href
+            else ""
+        )
+        part2_line = (
+            f"<p class=\"sub\" style=\"margin-top:0.55rem;\"><strong>Этап 2 (кейсы):</strong> {he(proto.part2_summary)}</p>"
+            if (proto.part2_summary or "").strip()
+            else ""
+        )
+        parts.append(
+            "<section class=\"summary\" aria-labelledby=\"hdr-related-assessment\">"
+            "<h2 id=\"hdr-related-assessment\">Связанный общий протокол оценки</h2>"
+            f"<div class=\"sub\">Сквозная сессия: <code>{he(proto.related_assessment_session_id)}</code> · "
+            f"phase: <strong>{he(proto.related_assessment_phase or '—')}</strong> · "
+            f"status: <strong>{he(proto.related_assessment_status or '—')}</strong></div>"
+            f"{part2_line}"
+            "<p class=\"note\">После завершения Part 2 и Part 3 этот общий протокол дополняется оценкой по кейсам и оценкой руководителя.</p>"
+            f"{report_link_html}"
+            "</section>"
+        )
     for it in proto.items:
         parts.append(
             "<section class=\"qa\">"
@@ -810,7 +944,9 @@ def render_examination_protocol_html(proto: ExaminationProtocolOut) -> str:
     return "".join(parts)
 
 
-def complete_examination_session(db: Session, session_id: str) -> ExaminationSessionOut:
+def complete_examination_session(
+    db: Session, session_id: str, *, advance_assessment_to_part2: bool = True
+) -> ExaminationSessionOut:
     row = db.get(ExaminationSessionRow, session_id)
     if row is None:
         raise HTTPException(status_code=404, detail="examination_session_not_found")
@@ -827,6 +963,13 @@ def complete_examination_session(db: Session, session_id: str) -> ExaminationSes
     db.commit()
     db.refresh(row)
     out = _session_out(db, row)
+    if advance_assessment_to_part2:
+        try:
+            from skill_assessment.services.part2_case import on_examination_completed_advance_skill_assessment
+
+            on_examination_completed_advance_skill_assessment(db, row)
+        except Exception:
+            _log.exception("examination: advance skill assessment to part2 after complete failed for %s", session_id[:8])
     try:
         from skill_assessment.services.examination_protocol_delivery import (
             schedule_examination_protocol_delivery,

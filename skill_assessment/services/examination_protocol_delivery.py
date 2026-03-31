@@ -25,13 +25,27 @@ def public_examination_protocol_url(session_id: str) -> str:
 
 
 def _format_telegram_digest(proto: ExaminationProtocolOut, session_id: str, employee_label: str) -> str:
+    report_href = proto.related_report_url or proto.related_report_path
     lines: list[str] = [
-        "Протокол экзамена по внутренним регламентам готов.",
+        "Протокол опроса по внутренним регламентам готов.",
         f"Сессия: {session_id[:8]}…",
         f"Сотрудник: {employee_label}",
-        f"Просмотр и скачивание (HTML): {public_examination_protocol_url(session_id)}",
-        "",
     ]
+    if report_href:
+        lines.extend(
+            [
+                f"Общий протокол оценки: {report_href}",
+                "В этом протоколе затем появятся кейсы (Part 2) и оценка руководителя (Part 3).",
+            ]
+        )
+        if (proto.part2_summary or "").strip():
+            lines.append(f"Этап 2: {proto.part2_summary}")
+    lines.extend(
+        [
+            f"Протокол опроса по регламентам (HTML): {public_examination_protocol_url(session_id)}",
+            "",
+        ]
+    )
     if proto.average_score_4 is not None and proto.average_score_percent is not None:
         lines.append(
             f"Итог: {proto.average_score_4:.2f} из 4 · {proto.average_score_percent:.1f}% (шкала % 50–100)."

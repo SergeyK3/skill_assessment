@@ -154,6 +154,16 @@
     }
     table.catalog-table { min-width: 64rem; font-size: 0.82rem; }
     table.catalog-table th.num, table.catalog-table td.num { text-align: center; width: 4rem; }
+    table.catalog-table thead th { vertical-align: top; background: var(--surface); }
+    table.catalog-table .cat-col-filter { display: block; margin-top: 0.35rem; }
+    table.catalog-table .cat-col-filter input,
+    table.catalog-table .cat-col-filter select {
+      width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box;
+      padding: 0.28rem 0.4rem; font-size: 0.78rem;
+      border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: inherit;
+    }
+    table.catalog-table th.cat-th-version { width: 7rem; min-width: 7rem; }
+    table.catalog-table th.cat-th-rank { width: 4.5rem; min-width: 4.5rem; }
   </style>
 </head>
 <body>
@@ -169,8 +179,8 @@
         <a id="navCoreEmp" class="sidebar-item" href="/clients" hidden>Сотрудники</a>
         <a id="navCorePos" class="sidebar-item" href="/clients" hidden>Должности</a>
         <a href="/docs" class="sidebar-item api-link">API</a>
-        <div class="sidebar-section-label">Экзамен по регламентам</div>
-        <a id="navExamProtocols" class="sidebar-item" href="/api/skill-assessment/ui/exam-protocols?client_id=demo_client">Протоколы экзаменов</a>
+        <div class="sidebar-section-label">Опрос по регламентам</div>
+        <a id="navExamProtocols" class="sidebar-item" href="/api/skill-assessment/ui/exam-protocols?client_id=demo_client">Протоколы опросов</a>
         <div class="sidebar-section-label">Глобальные каталоги</div>
         <a href="#" class="sidebar-item catalog-nav active" id="navViewSession" data-view="session">Рабочая сессия</a>
         <a href="#" class="sidebar-item catalog-nav" id="navViewSkills" data-view="skills">Ключевые навыки</a>
@@ -188,9 +198,9 @@
         </div>
 
         <div class="prep-banner" id="examProtocolBanner" style="background: rgba(124,58,237,0.1); border: 1px solid rgba(124,58,237,0.4);">
-          <strong>Протокол экзамена по регламентам</strong> (сценарий в Telegram после опроса по документам):
+          <strong>Протокол опроса по регламентам</strong> (сценарий в Telegram после опроса по документам):
           <a id="linkExamProtocolsMain" href="/api/skill-assessment/ui/exam-protocols?client_id=demo_client">Открыть список протоколов</a>
-          — HTML по завершённым экзаменам. В таблице <strong>«История назначений сессий»</strong> ниже у каждой строки в колонке «Действия» также есть ссылка <strong>«Протокол экзамена»</strong> (фильтр по сотруднику).
+          — HTML по завершённым опросам. В таблице <strong>«История назначений сессий»</strong> ниже у каждой строки в колонке «Действия» также есть ссылка <strong>«Протоколы опросов»</strong> (фильтр по сотруднику).
         </div>
 
         <div class="block">
@@ -243,6 +253,7 @@
                 <tr>
                   <th>Должность</th>
                   <th>Сотрудник</th>
+                  <th>Дата / время</th>
                   <th>Навык</th>
                   <th class="num" title="Среднее Part 1 и Part 2, шкала 0–3">Итог 0–3</th>
                   <th class="num" title="Тот же итог в процентах">Итог %</th>
@@ -250,7 +261,7 @@
                 </tr>
               </thead>
               <tbody id="refEvalBody">
-                <tr><td colspan="6" class="meta">Нажмите «Обновить таблицу».</td></tr>
+                <tr><td colspan="7" class="meta">Нажмите «Обновить таблицу».</td></tr>
               </tbody>
             </table>
           </div>
@@ -374,10 +385,14 @@
           <div class="block" id="stepDocs">
             <h2><span class="step-num">1</span> Опрос по служебным документам</h2>
             <p class="meta"><strong>Слот в Telegram</strong> сотрудник выбирает в боте; HR может переопределить дату и время здесь: кнопка <strong>«Изменить»</strong> (ниже) или в таблице <strong>«История назначений сессий»</strong> — <strong>«Изменить слот»</strong>, затем <strong>«Сохранить слот»</strong>.</p>
-            <p class="meta"><strong>Что ожидать после выбора слота:</strong> не в момент слота, а примерно за <strong>N минут до него</strong> (по умолчанию <strong>5</strong>, переменная <code>DOCS_SURVEY_REMINDER_MINUTES_BEFORE</code>, максимум 120) в Telegram приходит напоминание с кнопками «готов / не готов». Если сотрудник нажимает «готов», открывается сценарий экзамена по регламентам; сам «опрос по документам» по длительности привязан к слоту. Если HR переносит слот вручную, напоминание придёт в новое окно; планировщик работает, пока запущен процесс API (uvicorn). Сразу после смены слота отдельного «приглашения» в чат может не быть — ждите окно напоминания за N минут до слота.</p>
-            <p class="meta">После старта сессии активен этап <code>part1</code>: сотруднику уходит уведомление в Telegram. Вопросы по регламенту задаются в экзамене в Telegram; формулировки и ответы фиксируются в <strong>протоколе экзамена</strong> (страница «Протоколы» / ссылка из уведомления). На этой странице отдельный чек-лист с дублирующими вопросами не показывается.</p>
+            <p class="meta"><strong>Что ожидать после выбора слота:</strong> не в момент слота, а примерно за <strong>N минут до него</strong> (по умолчанию <strong>5</strong>, переменная <code>DOCS_SURVEY_REMINDER_MINUTES_BEFORE</code>, максимум 120) в Telegram приходит напоминание с кнопками «готов / не готов». Если сотрудник нажимает «готов», открывается сценарий <strong>опроса по регламентам</strong> в Telegram; сам «опрос по документам» по длительности привязан к слоту. Если HR переносит слот вручную, напоминание придёт в новое окно; планировщик работает, пока запущен процесс API (uvicorn). Сразу после смены слота отдельного «приглашения» в чат может не быть — ждите окно напоминания за N минут до слота.</p>
+            <p class="meta">После старта сессии активен этап <code>part1</code>: сотруднику уходит уведомление в Telegram. Вопросы по регламенту задаются в <strong>опросе в Telegram</strong>; формулировки и ответы фиксируются в <strong>протоколе опроса</strong> (страница «Протоколы опросов» / ссылка из уведомления). На этой странице отдельный чек-лист с дублирующими вопросами не показывается.</p>
             <p class="meta">Если назначение ошибочное или тестовое, отмените его в блоке <strong>«История назначений сессий»</strong> (кнопка «Отменить») — статус станет <code>cancelled</code>, сотрудник не будет «застревать» в незавершённой сессии. Чтобы убрать строку из истории полностью (в т.ч. после завершения или отмены), используйте <strong>«Удалить»</strong> — запись удалится из базы без восстановления.</p>
             <p id="docsTelegramStatus" class="meta" hidden></p>
+            <p class="row-actions" style="margin-top:0.5rem; flex-wrap:wrap; align-items:center;">
+              <button type="button" id="btnResendDocsTg" disabled>Повторно отправить в Telegram (этап 1: опрос и ПДн)</button>
+              <span class="meta" style="margin-left:0.5rem;">Если сотрудник ничего не получил — нажмите после выбора сессии. Не для завершённых и отменённых назначений.</span>
+            </p>
             <p id="docsTelegramPlan" class="meta" hidden style="margin-top:0.5rem; line-height:1.45;"></p>
             <div id="docsSlotEditWrap" class="row-actions" style="margin-top:0.75rem; flex-wrap:wrap; align-items:center;" hidden>
               <span class="meta" id="docsSlotZoneHint">Слот опроса по документам (локальное время, зона из <code>DOCS_SURVEY_LOCAL_TIMEZONE</code>):</span>
@@ -413,11 +428,11 @@
         </div>
 
           <div class="block" id="stepSkills">
-            <h2><span class="step-num">3</span> Оценка руководителем (Part 3)</h2>
-          <p class="meta">Шкала: 0 — нет, 1 — частично, 2 — типично, 3 — продвинуто</p>
-          <div id="skillsMount"><p class="meta">Сначала нажмите «Создать сессию и старт».</p></div>
+            <h2><span class="step-num">3</span> Ссылка для руководителя (Part 3)</h2>
+          <p class="meta">Руководитель оценивает сотрудника на отдельной странице по персональной ссылке. Из HR-интерфейса доступно только копирование и отправка этой ссылки.</p>
+          <div id="skillsMount"><p class="meta">Сначала запустите или доведите сессию до этапа 3.</p></div>
           <div class="row-actions">
-            <button type="button" class="primary" id="btnSave" disabled>Сохранить оценки руководителя</button>
+            <button type="button" class="primary" id="btnCopyManagerLink" disabled>Скопировать ссылку руководителю</button>
             <span id="saveOut" class="meta"></span>
           </div>
         </div>
@@ -427,6 +442,7 @@
         <div id="viewCatalogSkills" hidden>
           <h1 style="margin-top:0;font-size:1.25rem;">Глобальный каталог — ключевые навыки</h1>
           <p class="meta">Матрица по версии каталога, должности (<code>position_code</code>) и подразделению/функции (<code>department_code</code>). <strong>Ранг 1</strong> — наивысший приоритет навыка в строке должности.</p>
+          <p class="meta" style="background:rgba(124,58,237,0.08);border:1px solid var(--border);border-radius:8px;padding:0.6rem 0.75rem;line-height:1.5;"><strong>Где вы сейчас:</strong> встроенный просмотр в рабочем UI плагина (<code>/api/skill-assessment/workspace</code> → пункт слева «Ключевые навыки») — таблица <strong>только для чтения</strong>, без фильтров в шапке. Если нужны фильтры по колонкам, выгрузка Excel и правка строк — откройте в ядре страницу <a href="/global/matrix-skills"><code>/global/matrix-skills</code></a> (тот же сервер и порт).</p>
           <p id="catalogSkillsErr" class="meta err" hidden></p>
           <div class="block">
             <h2>Таблица матрицы навыков</h2>
@@ -456,6 +472,7 @@
         <div id="viewCatalogKpi" hidden>
           <h1 style="margin-top:0;font-size:1.25rem;">Глобальный каталог — KPI</h1>
           <p class="meta">Матрица по версии, должности и подразделению. <strong>Приоритет 1</strong> — главный KPI для роли в этой строке.</p>
+          <p class="meta" style="background:rgba(124,58,237,0.08);border:1px solid var(--border);border-radius:8px;padding:0.6rem 0.75rem;line-height:1.5;"><strong>Где вы сейчас:</strong> встроенный просмотр в <code>/api/skill-assessment/workspace</code> — без фильтров в шапке. С фильтрами, Excel и правкой — <a href="/global/matrix-kpi"><code>/global/matrix-kpi</code></a>.</p>
           <p id="catalogKpiErr" class="meta err" hidden></p>
           <div class="block">
             <h2>Таблица матрицы KPI</h2>
@@ -499,7 +516,7 @@
       return c && c.trim() ? c.trim() : 'demo_client';
     })();
 
-    /** Страница списка протоколов экзамена; при необходимости — только по сотруднику. */
+    /** Страница списка протоколов опроса по регламентам; при необходимости — только по сотруднику. */
     function examProtocolsPageUrl(employeeId) {
       let u = '/api/skill-assessment/ui/exam-protocols?client_id=' + encodeURIComponent(clientId);
       if (employeeId != null && String(employeeId).trim()) {
@@ -508,9 +525,24 @@
       return u;
     }
 
+    function syncWorkspaceUrl() {
+      try {
+        const u = new URL(window.location.href);
+        u.searchParams.set('client_id', clientId);
+        if (sessionId) {
+          u.searchParams.set('session_id', String(sessionId));
+        } else {
+          u.searchParams.delete('session_id');
+        }
+        history.replaceState(null, '', u.pathname + u.search + u.hash);
+      } catch (_) {}
+    }
+
     let selectedEmployeeId = null;
     let selectedEmployeeLabel = '';
     let sessionId = null;
+    const SESSION_AUTO_REFRESH_MS = 10000;
+    let sessionAutoRefreshTimer = null;
     let skills = [];
     let sessionsCache = [];
     let employeesCache = [];
@@ -727,19 +759,78 @@
       return (s.status === 'draft' || s.status === 'in_progress') ? s : null;
     }
 
-    function renderStartTelegramStatus(startTelegram) {
+    function renderStartTelegramStatus(startTelegram, sessionRow) {
       const tgEl = document.getElementById('docsTelegramStatus');
       if (!tgEl) return;
       if (startTelegram && startTelegram.sent) {
         tgEl.hidden = false;
-        tgEl.innerHTML = '<span class="ok">В Telegram отправлено уведомление</span> (chat_id: <code>' + escapeHtml(String(startTelegram.chat_id || '')) + ').';
+        let html =
+          '<span class="ok">В Telegram отправлено уведомление</span> (chat_id: <code>' +
+          escapeHtml(String(startTelegram.chat_id || '')) +
+          ').';
+        if (startTelegram.used_fallback_chat) {
+          html +=
+            ' <span class="meta"><strong>Диагностика:</strong> у сотрудника не найден личный Telegram (ни привязка, ни поле в карточке) — сообщение ушло на <em>fallback</em>-чат из настроек. Сотрудник в своём диалоге с ботом его не увидит; задайте chat_id или привязку, затем «Повторить Telegram (ПДн)».</span>';
+        }
+        tgEl.innerHTML = html;
+      } else if (startTelegram && startTelegram.queued) {
+        tgEl.hidden = false;
+        tgEl.innerHTML =
+          '<span class="meta">Отправка сообщения о ПДн и опросе <strong>выполняется в фоне</strong> (чтобы не блокировать API при нагрузке). ' +
+          'Через несколько секунд проверьте Telegram сотрудника. Если сообщения нет — смотрите логи сервера (<code>docs_survey</code>). ' +
+          'Переменная: <code>SKILL_ASSESSMENT_DOCS_SURVEY_TELEGRAM_BACKGROUND</code>.</span>';
       } else if (startTelegram && startTelegram.skipped_reason) {
         tgEl.hidden = false;
         tgEl.innerHTML = '<span class="meta">Telegram: не отправлено — ' + escapeHtml(String(startTelegram.skipped_reason)) + '</span>';
+      } else if (sessionRow && sessionRow.status && sessionRow.status !== 'draft' && !startTelegram) {
+        tgEl.hidden = false;
+        tgEl.innerHTML =
+          '<span class="err"><strong>Telegram (этап 1: опрос и согласие на ПДн) в этом нажатии не отправлялся.</strong></span> ' +
+          '<span class="meta">Сервер не вызывал <code>POST …/sessions/…/start</code>, потому что сессия уже не в статусе <code>draft</code> ' +
+          '(черновик). Одно и то же сообщение с предупреждением об опросе и кнопками ПДн уходит только при первом старте черновика.</span><br/>' +
+          '<span class="meta"><strong>Что сделать:</strong> в блоке <strong>«История назначений сессий»</strong> ниже на этой странице нажмите <strong>«Отменить»</strong> для этой сессии, ' +
+          'затем снова «Запустить или продолжить цикл оценки» — появится новый черновик и уйдёт сообщение в Telegram (если настроены токен и chat_id). ' +
+          'Если сообщения не было и при первом старте — проверьте <code>TELEGRAM_BOT_TOKEN</code>, привязку <code>chat_id</code> сотрудника или ' +
+          '<code>TELEGRAM_DOCS_SURVEY_FALLBACK_CHAT_ID</code>, логи сервера (<code>docs_survey</code>). Для нажатий на кнопки согласия в чате должен работать опрос Telegram ' +
+          '(например <code>python -m skill_assessment.telegram_worker</code>, если polling не в uvicorn).</span>';
       } else {
         tgEl.hidden = true;
         tgEl.textContent = '';
       }
+    }
+
+    function activePhaseDescription(phase) {
+      const ph = String(phase || 'draft');
+      const map = {
+        draft: 'Черновик — нажмите «Запустить или продолжить цикл оценки», чтобы начать этап 1.',
+        part1:
+          'Этап 1: Telegram (слот, опрос по документам), затем опрос по регламентам в Telegram. Далее — этап 2 (кейсы) и этап 3 (оценка руководителя).',
+        part2:
+          'Этап 2: сотрудник решает кейсы. Ссылка и тексты кейсов уходят в Telegram при переходе на этот этап (после этапа 1). Не приходит — на сервере: TELEGRAM_BOT_TOKEN, привязка chat_id или TELEGRAM_DOCS_SURVEY_FALLBACK_CHAT_ID (тот же fallback, что для опроса по документам).',
+        part3: 'Этап 3: оценка руководителем по матрице навыков (кейсы сотрудником уже отправлены).',
+        report: 'Формирование / просмотр отчёта.',
+        completed: 'Цикл оценки по этой сессии завершён.',
+      };
+      return map[ph] || ('Текущая фаза: «' + ph + '».');
+    }
+
+    function renderSessionWorkflowSummary(row, infoEl, opts) {
+      const el = infoEl || document.getElementById('sessionInfo');
+      if (!el || !row || !sessionId) return;
+      const ph = String(row.phase || 'draft');
+      const st = String(row.status || 'draft');
+      const prefix = opts && opts.prefix ? String(opts.prefix).trim() + ' ' : '';
+      el.innerHTML =
+        prefix +
+        'Единая сессия оценки: <code>' +
+        sessionId +
+        '</code>. Активный этап: <strong>' +
+        escapeHtml(ph) +
+        '</strong> · статус: <strong>' +
+        escapeHtml(st) +
+        '</strong>. <span class="meta">' +
+        escapeHtml(activePhaseDescription(ph)) +
+        '</span>';
     }
 
     async function ensureWorkflowSession(opts) {
@@ -763,7 +854,10 @@
           throw new Error('Ошибка создания единой сессии оценки');
         }
         sessionId = j.id;
-        createdNew = !reusable;
+        // POST /sessions часто возвращает уже существующую сессию сотрудника — у неё старый created_at.
+        const caMs = parseUtcMs(j.created_at);
+        const ageMs = isNaN(caMs) ? Infinity : Date.now() - caMs;
+        createdNew = ageMs >= 0 && ageMs < 90000;
       }
 
       let row = await fetch(API + '/sessions/' + sessionId, FETCH_NO_STORE).then(r => r.json());
@@ -781,8 +875,10 @@
       }
 
       if (info) {
-        const action = createdNew ? 'Создан новый единый цикл оценки.' : 'Используется текущая единая сессия оценки.';
-        info.innerHTML = action + ' Сессия: <code>' + sessionId + '</code> · фаза: <strong>' + escapeHtml(String(row.phase || 'draft')) + '</strong> · статус: <strong>' + escapeHtml(String(row.status || 'draft')) + '</strong>.';
+        const action = createdNew
+          ? 'Создан новый единый цикл оценки.'
+          : 'Используется уже существующая сессия оценки (не новая запись в базе).';
+        renderSessionWorkflowSummary(row, info, { prefix: action });
       }
       return { row, startTelegram, createdNew };
     }
@@ -963,7 +1059,7 @@
           ? escapeHtml(String(s.exam_status_label))
           : (
               s.hr_no_show
-                ? '<span class="badge-no-show" title="Таймаут согласия ПДн или пропущенный слот Part 1, если сотрудник не дошёл до экзамена по регламентам.">неявка</span>'
+                ? '<span class="badge-no-show" title="Таймаут согласия ПДн или пропущенный слот Part 1, если сотрудник не дошёл до опроса по регламентам.">неявка</span>'
                 : '—'
             );
         const cr = fmtDt(s.created_at);
@@ -971,7 +1067,7 @@
         const shortId = s.id ? s.id.substring(0, 8) + '…' : '—';
         const proto = examProtocolsPageUrl(s.employee_id);
         const examCompleted = String(s.exam_status_label || '') === 'Завершён';
-        let actions = '<a href="' + proto + '" target="_blank" rel="noopener" title="Протоколы опросов и экзамена по этому сотруднику">Протоколы опросов</a>';
+        let actions = '<a href="' + proto + '" target="_blank" rel="noopener" title="Протоколы опроса по регламентам по этому сотруднику">Протоколы опросов</a>';
         if (s.status !== 'completed' && s.status !== 'cancelled') {
           if (!examCompleted) {
             actions += ' · <button type="button" class="hist-slot-edit" data-sid="' + escapeHtml(s.id) + '">Изменить слот</button>';
@@ -1090,12 +1186,14 @@
         }
       } catch (_) {}
       try {
+        // API: limit не больше 200 (иначе 422 — кэш сессий пустой, таблица «врёт» и POST /sessions каждый раз как «новый»).
         const r = await fetch(API + '/sessions?client_id=' + encodeURIComponent(clientId) + '&limit=500&offset=0', FETCH_NO_STORE);
         if (r.ok) {
           const j = await r.json();
           sessionsCache = parseSessionsPayload(j);
-        } else if (errEl.hidden) {
-          errEl.textContent = 'Список сессий оценки не загрузился (HTTP ' + r.status + ').';
+        } else {
+          const detail = 'Список сессий оценки не загрузился (HTTP ' + r.status + ').';
+          errEl.textContent = errEl.textContent ? errEl.textContent + ' ' + detail : detail;
           errEl.hidden = false;
         }
       } catch (_) {
@@ -1126,10 +1224,10 @@
       }
       if (!tbody) return;
       if (!clientId) {
-        tbody.innerHTML = '<tr><td colspan="6" class="meta">Укажите client_id в URL.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="meta">Укажите client_id в URL.</td></tr>';
         return;
       }
-      tbody.innerHTML = '<tr><td colspan="6" class="meta">Загрузка…</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="meta">Загрузка…</td></tr>';
       try {
         const p = new URLSearchParams();
         p.set('client_id', clientId);
@@ -1149,17 +1247,23 @@
         }
         if (!rows.length) {
           tbody.innerHTML =
-            '<tr><td colspan="6" class="meta">Нет строк: для последних сессий нет навыков с заполненным Part 1 или Part 2.</td></tr>';
+            '<tr><td colspan="7" class="meta">Нет строк: для последних сессий нет навыков с заполненным Part 1 или Part 2.</td></tr>';
           return;
         }
         tbody.innerHTML = rows.map(function(row) {
           const sid = row.session_id;
           const lvl = row.aggregate_level_0_3 != null ? String(row.aggregate_level_0_3) : '—';
           const pc = row.aggregate_pct_0_100 != null ? String(row.aggregate_pct_0_100) : '—';
+          const whenIso = row.session_completed_at || row.session_updated_at || row.session_created_at || '';
+          const whenLabel = fmtShort(whenIso, DEFAULT_DOCS_SURVEY_TZ) || '—';
+          const whenTitle = row.session_completed_at
+            ? 'Завершение сессии'
+            : (row.session_updated_at ? 'Последнее обновление сессии' : 'Создание сессии');
           return (
             '<tr data-session-id="' + escapeHtml(sid) + '">' +
             '<td class="td-position">' + escapeHtml(row.position_label || '—') + '</td>' +
             '<td>' + escapeHtml(row.employee_label || row.employee_id || '—') + '</td>' +
+            '<td title="' + escapeHtml(whenTitle) + '">' + escapeHtml(whenLabel) + '</td>' +
             '<td>' + escapeHtml(row.skill_title || '') + '<br><span class="meta"><code>' + escapeHtml(row.skill_code || '') + '</code></span></td>' +
             '<td class="num">' + escapeHtml(lvl) + '/3</td>' +
             '<td class="num">' + escapeHtml(pc) + '</td>' +
@@ -1170,7 +1274,7 @@
           );
         }).join('');
       } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="6" class="meta err">Не удалось загрузить сводную таблицу.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="meta err">Не удалось загрузить сводную таблицу.</td></tr>';
         if (errEl) {
           errEl.textContent = String(e.message || e);
           errEl.hidden = false;
@@ -1356,19 +1460,48 @@
       skills = Array.isArray(list) ? list : [];
     }
 
-    function renderSkillsTable() {
+    function buildManagerAssessmentLink(s) {
+      if (!s) return '';
+      const origin = String(window.location.origin || '');
+      const lowOrigin = origin.toLowerCase();
+      const currentOriginIsPublic = !!origin && !(lowOrigin.includes('127.0.0.1') || lowOrigin.includes('localhost') || lowOrigin.includes('0.0.0.0'));
+      if (s.manager_assessment_token && currentOriginIsPublic) {
+        return origin + '/api/skill-assessment/ui/manager-assessment?token=' + encodeURIComponent(String(s.manager_assessment_token));
+      }
+      if (s.manager_assessment_url) return String(s.manager_assessment_url);
+      if (s.manager_assessment_token) {
+        return origin + '/api/skill-assessment/ui/manager-assessment?token=' + encodeURIComponent(String(s.manager_assessment_token));
+      }
+      return '';
+    }
+
+    function renderManagerAssessmentLinkPanel(s) {
       const el = document.getElementById('skillsMount');
-      if (!skills.length) {
-        el.innerHTML = '<p class="meta">Нет навыков в таксономии.</p>';
+      const btn = document.getElementById('btnCopyManagerLink');
+      const out = document.getElementById('saveOut');
+      if (!el) return;
+      if (out) out.textContent = '';
+      if (!s) {
+        el.innerHTML = '<p class="meta">Сначала выберите сотрудника и откройте сессию.</p>';
+        if (btn) btn.disabled = true;
         return;
       }
-      const rows = skills.map(s =>
-        '<tr data-skill-id="' + s.id + '"><td>' + s.title + '</td><td><code>' + s.code + '</code></td><td>' +
-          '<select class="level" aria-label="Уровень для ' + s.title.replace(/"/g, '') + '">' +
-          '<option value="0">0</option><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option>' +
-        '</select></td><td><textarea class="manager-comment" rows="2" placeholder="Комментарий по навыку (необязательно)" aria-label="Комментарий: ' + s.title.replace(/"/g, '') + '"></textarea></td></tr>'
-      ).join('');
-      el.innerHTML = '<table><thead><tr><th>Навык</th><th>Код</th><th>Уровень</th><th>Комментарий</th></tr></thead><tbody>' + rows + '</tbody></table>';
+      const link = buildManagerAssessmentLink(s);
+      const ready = !!s.manager_assessment_token && (s.phase === 'part3' || s.phase === 'completed' || s.phase === 'report');
+      if (!ready) {
+        el.innerHTML = '<p class="meta">Этап 3 ещё не открыт. После завершения кейсов здесь появится персональная ссылка для руководителя.</p>';
+        if (btn) btn.disabled = true;
+        return;
+      }
+      const deadline = s.manager_assessment_deadline_label ? ('<p class="meta">Дедлайн: <strong>' + escapeHtml(s.manager_assessment_deadline_label) + '</strong></p>') : '';
+      el.innerHTML =
+        '<div class="block" style="margin-top:0;">' +
+          '<p class="meta" style="margin-top:0;">Скопируйте эту ссылку и отправьте руководителю экзаменуемого в мессенджер или почтой. По ней откроется отдельная страница оценки, удобная для телефона и компьютера.</p>' +
+          deadline +
+          '<p class="meta"><code style="word-break:break-all;">' + escapeHtml(link || 'Ссылка недоступна') + '</code></p>' +
+          (link ? '<p class="meta"><a href="' + escapeHtml(link) + '" target="_blank" rel="noopener">Открыть страницу руководителя</a></p>' : '<p class="meta err">Публичная ссылка пока недоступна. Проверьте внешний URL сервера.</p>') +
+        '</div>';
+      if (btn) btn.disabled = !link;
     }
 
     function fillDocsSlotForm(s) {
@@ -1403,6 +1536,20 @@
       fillDocsSlotForm(s || null);
     }
 
+    function syncResendDocsButton(s) {
+      const btn = document.getElementById('btnResendDocsTg');
+      if (!btn) return;
+      if (!sessionId) {
+        btn.disabled = true;
+        return;
+      }
+      if (!s) {
+        btn.disabled = false;
+        return;
+      }
+      btn.disabled = s.status === 'completed' || s.status === 'cancelled';
+    }
+
     async function refreshSessionRow() {
       const phaseEl = document.getElementById('phaseOut');
       if (!sessionId) {
@@ -1413,6 +1560,8 @@
         if (linkEl0) { linkEl0.hidden = true; linkEl0.textContent = ''; }
         updateDocsSlotUi(null);
         updateDocsPhasePanel(null);
+        syncResendDocsButton(null);
+        renderManagerAssessmentLinkPanel(null);
         return;
       }
       try {
@@ -1477,11 +1626,37 @@
         }
         updateDocsSlotUi(s);
         updateDocsPhasePanel(s);
+        syncResendDocsButton(s);
+        renderManagerAssessmentLinkPanel(s);
       } catch (_) {
         phaseEl.textContent = 'Не удалось загрузить сессию. Обновите страницу.';
         updateDocsSlotUi(null);
         updateDocsPhasePanel(null);
+        syncResendDocsButton(null);
+        renderManagerAssessmentLinkPanel(null);
       }
+    }
+
+    function stopSessionAutoRefresh() {
+      if (sessionAutoRefreshTimer) {
+        window.clearTimeout(sessionAutoRefreshTimer);
+        sessionAutoRefreshTimer = null;
+      }
+    }
+
+    function scheduleSessionAutoRefresh() {
+      stopSessionAutoRefresh();
+      if (document.hidden || (!sessionId && !selectedEmployeeId)) return;
+      sessionAutoRefreshTimer = window.setTimeout(async function() {
+        try {
+          if (sessionId) {
+            await refreshSessionRow();
+          } else if (selectedEmployeeId) {
+            await loadRosterData();
+          }
+        } catch (_) {}
+        scheduleSessionAutoRefresh();
+      }, SESSION_AUTO_REFRESH_MS);
     }
 
     function updateDocsPhasePanel(s) {
@@ -1500,7 +1675,13 @@
         wrap.hidden = true;
         return;
       }
-      hint.textContent = 'Вопросы по регламенту задаются в экзамене в Telegram; ответы и оценка — в протоколе экзамена. Это та же общая сессия оценки. Чтобы перейти к кейсу без заполнения старого чек-листа, нажмите кнопку (доступна в фазе part1).';
+      if (s.phase === 'part2') {
+        hint.textContent =
+          'Сейчас этап 2 (кейсы). Кнопка ниже скрыта. Сотруднику должна была уйти ссылка на кейсы в Telegram при переходе в part2 на сервере; если не ушла — проверьте TELEGRAM_BOT_TOKEN, SKILL_ASSESSMENT_PUBLIC_BASE_URL и chat_id сотрудника.';
+      } else {
+        hint.textContent =
+          'Вопросы по регламенту задаются в опросе в Telegram; ответы и оценка — в протоколе опроса. Это та же общая сессия оценки. Чтобы перейти к кейсу без заполнения старого чек-листа, нажмите кнопку (доступна в фазе part1).';
+      }
       const showBtn = s.status === 'in_progress' && s.phase === 'part1';
       wrap.hidden = !showBtn;
     }
@@ -1523,6 +1704,7 @@
 
         const ls = latestSessionForEmployee(eid);
         sessionId = ls ? ls.id : null;
+        syncWorkspaceUrl();
 
         renderRoster();
 
@@ -1536,18 +1718,9 @@
         }
         await loadSessionHistory();
 
-        document.getElementById('btnSave').disabled = true;
         document.getElementById('skillsMount').innerHTML = '<p class="meta">Для этапов 1–3 используется одна общая сессия оценки. Запустите или продолжите цикл ниже.</p>';
 
         if (ls && ls.status === 'in_progress') {
-          try {
-      await loadTaxonomy();
-            renderSkillsTable();
-      document.getElementById('btnSave').disabled = false;
-          } catch (err) {
-            document.getElementById('skillsMount').innerHTML = '<p class="meta err">' + escapeHtml(err.message || String(err)) + '</p>';
-            document.getElementById('btnSave').disabled = true;
-          }
           await refreshSessionRow();
         } else if (ls && ls.status === 'draft') {
           sessionId = ls.id;
@@ -1555,7 +1728,6 @@
         } else if (ls && ls.status === 'completed') {
           document.getElementById('skillsMount').innerHTML = '<p class="meta">Последний цикл оценки по этому сотруднику завершён. При следующем запуске будет создана новая единая сессия.</p>';
           document.getElementById('sessionInfo').innerHTML = 'Статус: <strong>completed</strong> (сессия ' + ls.id.substring(0, 8) + '…).';
-          document.getElementById('btnSave').disabled = true;
           sessionId = null;
           await refreshSessionRow();
         } else {
@@ -1566,6 +1738,7 @@
         requestAnimationFrame(function() {
           wp.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
+        scheduleSessionAutoRefresh();
       } catch (err) {
         console.error(err);
         errEl.textContent = 'Не удалось обработать выбор сотрудника. Обновите страницу (F12 → консоль для подробностей).';
@@ -1584,21 +1757,8 @@
         info.innerHTML = '<span class="err">' + escapeHtml(err.message || String(err)) + '</span>';
         return;
       }
-      renderStartTelegramStatus(ensured.startTelegram);
+      renderStartTelegramStatus(ensured.startTelegram, ensured.row);
 
-      try {
-        await loadTaxonomy();
-        renderSkillsTable();
-      } catch (err) {
-        info.innerHTML = '<span class="err">' + escapeHtml(err.message || String(err)) + '</span>';
-        document.getElementById('btnSave').disabled = true;
-        await refreshSessionRow();
-        await loadRosterData();
-        return;
-      }
-
-      info.innerHTML = 'Единая сессия оценки: <code>' + sessionId + '</code>. Активный этап: <strong>part1</strong> (Telegram, слот, экзамен по регламентам). Дальше — этап 2 (кейс) и этап 3 (оценки).';
-      document.getElementById('btnSave').disabled = false;
       await refreshSessionRow();
       await loadRosterData();
 
@@ -1606,6 +1766,48 @@
         const step = document.getElementById('stepDocs');
         if (step) step.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
+    };
+
+    document.getElementById('btnResendDocsTg').onclick = async () => {
+      const stEl = document.getElementById('docsTelegramStatus');
+      if (!sessionId) return;
+      const btn = document.getElementById('btnResendDocsTg');
+      btn.disabled = true;
+      try {
+        const r = await fetch(
+          API + '/sessions/' + encodeURIComponent(sessionId) + '/resend-docs-survey-telegram',
+          { method: 'POST' }
+        );
+        const j = await r.json().catch(function() { return null; });
+        if (!r.ok) {
+          const d = j && j.detail != null ? j.detail : 'HTTP ' + r.status;
+          const msg = typeof d === 'string' ? d : JSON.stringify(d);
+          if (stEl) {
+            stEl.hidden = false;
+            stEl.innerHTML = '<span class="err">Повторная отправка не выполнена: ' + escapeHtml(msg) + '</span>';
+          }
+        } else if (stEl) {
+          stEl.hidden = false;
+          if (j && j.queued) {
+            stEl.innerHTML =
+              '<span class="meta">Отправка поставлена в фон (<code>SKILL_ASSESSMENT_DOCS_SURVEY_TELEGRAM_BACKGROUND</code>). Через несколько секунд проверьте Telegram и логи <code>docs_survey</code>.</span>';
+          } else if (j && j.sent) {
+            stEl.innerHTML =
+              '<span class="ok">Сообщение отправлено в Telegram.</span> chat_id: <code>' +
+              escapeHtml(String(j.chat_id || '')) +
+              '</code>';
+          } else {
+            stEl.innerHTML =
+              '<span class="meta">Не отправлено: ' + escapeHtml(String((j && j.skipped_reason) || 'unknown')) + '</span>';
+          }
+        }
+      } catch (e) {
+        if (stEl) {
+          stEl.hidden = false;
+          stEl.innerHTML = '<span class="err">' + escapeHtml(e.message || String(e)) + '</span>';
+        }
+      }
+      await refreshSessionRow();
     };
 
     function employeeCasePageUrl(token, skillId) {
@@ -1625,7 +1827,7 @@
       if (!sessionId && selectedEmployeeId) {
         try {
           const ensured = await ensureWorkflowSession({ autostart: true });
-          renderStartTelegramStatus(ensured.startTelegram);
+          renderStartTelegramStatus(ensured.startTelegram, ensured.row);
           await refreshSessionRow();
           await loadRosterData();
         } catch (err) {
@@ -1774,33 +1976,20 @@
       }
     };
 
-    document.getElementById('btnSave').onclick = async () => {
+    document.getElementById('btnCopyManagerLink').onclick = async () => {
       const out = document.getElementById('saveOut');
       out.textContent = '';
       if (!sessionId) return;
-      const ratings = [];
-      document.querySelectorAll('#skillsMount tbody tr').forEach(tr => {
-        const sid = tr.getAttribute('data-skill-id');
-        const lv = parseInt(tr.querySelector('select.level').value, 10);
-        const ta = tr.querySelector('textarea.manager-comment');
-        const commentRaw = ta ? ta.value.trim() : '';
-        const payload = { skill_id: sid, level: lv };
-        if (commentRaw) payload.comment = commentRaw;
-        ratings.push(payload);
-      });
-      const r = await fetch(API + '/sessions/' + sessionId + '/manager-ratings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ratings })
-      });
-      const j = await r.json();
-      if (r.ok) {
-        out.innerHTML = '<span class="ok">Сохранено</span> (' + j.length + ' навыков)';
-        await fetch(API + '/sessions/' + sessionId + '/complete', { method: 'POST' }).catch(() => {});
-        await refreshSessionRow();
-        await loadRosterData();
-      } else {
-        out.innerHTML = '<span class="err">Ошибка</span> ' + JSON.stringify(j);
+      try {
+        const r = await fetch(API + '/sessions/' + encodeURIComponent(sessionId), FETCH_NO_STORE);
+        const s = await r.json().catch(() => null);
+        if (!r.ok || !s) throw new Error('Не удалось получить ссылку руководителя.');
+        const link = buildManagerAssessmentLink(s);
+        if (!link) throw new Error('Ссылка руководителя ещё не готова или внешний URL не настроен.');
+        await navigator.clipboard.writeText(link);
+        out.innerHTML = '<span class="ok">Ссылка скопирована. Её можно отправить руководителю.</span>';
+      } catch (err) {
+        out.innerHTML = '<span class="err">' + escapeHtml(err.message || String(err)) + '</span>';
       }
     };
 
@@ -1845,6 +2034,7 @@
       selectedEmployeeLabel = e ? empLabel(e) : String(s.employee_id || '');
       document.getElementById('selectedEmpName').textContent = selectedEmployeeLabel;
       sessionId = s.id;
+      syncWorkspaceUrl();
       const wp = document.getElementById('workflowPanel');
       wp.hidden = false;
       renderRoster();
@@ -1856,20 +2046,13 @@
         const opt = [...hfs.options].find(o => normId(o.value) === want);
         if (opt) hfs.value = opt.value;
       }
-      try {
-        await loadTaxonomy();
-        renderSkillsTable();
-        document.getElementById('btnSave').disabled = s.status !== 'in_progress';
-      } catch (err) {
-        document.getElementById('skillsMount').innerHTML = '<p class="meta err">' + escapeHtml(err.message || String(err)) + '</p>';
-        document.getElementById('btnSave').disabled = true;
-      }
-      document.getElementById('sessionInfo').innerHTML = 'Сессия: <code>' + sessionId + '</code> · фаза: <code>' + s.phase + '</code> · статус: <code>' + s.status + '</code>';
+      renderSessionWorkflowSummary(s, document.getElementById('sessionInfo'));
       await refreshSessionRow();
       await loadSessionHistory();
       requestAnimationFrame(function() {
         wp.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
+      scheduleSessionAutoRefresh();
     }
 
     function applySessionFromUrl() {
@@ -1885,6 +2068,30 @@
       if (location.hash === '#ref-eval-table') {
         document.dispatchEvent(new CustomEvent('sa-focus-ref-eval'));
       }
+      syncWorkspaceUrl();
+      scheduleSessionAutoRefresh();
+    });
+
+    document.addEventListener('visibilitychange', function() {
+      if (document.hidden) {
+        stopSessionAutoRefresh();
+        return;
+      }
+      if (sessionId) {
+        refreshSessionRow().catch(function() {});
+      } else if (selectedEmployeeId) {
+        loadRosterData().catch(function() {});
+      }
+      scheduleSessionAutoRefresh();
+    });
+
+    window.addEventListener('focus', function() {
+      if (sessionId) {
+        refreshSessionRow().catch(function() {});
+      } else if (selectedEmployeeId) {
+        loadRosterData().catch(function() {});
+      }
+      scheduleSessionAutoRefresh();
     });
 
     (function() {
@@ -1911,7 +2118,7 @@
         try {
           if (!sessionId) {
             const ensured = await ensureWorkflowSession({ autostart: true });
-            renderStartTelegramStatus(ensured.startTelegram);
+            renderStartTelegramStatus(ensured.startTelegram, ensured.row);
           }
           const r = await fetch(API + '/sessions/' + encodeURIComponent(sessionId) + '/docs-survey-slot', {
             method: 'PATCH',
