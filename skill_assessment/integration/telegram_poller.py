@@ -78,16 +78,16 @@ def _run_docs_survey_pd_consent_turn(
         db.close()
 
 
-def _run_examination_turn(
+def _run_dialog_dispatch_turn(
     chat_id: int, text: str | None, is_start_command: bool
 ) -> list[str]:
     from app.db import SessionLocal
 
-    from skill_assessment.services.telegram_examination import handle_telegram_message
+    from skill_assessment.services.telegram_dispatcher import dispatch_dialog_message
 
     db = SessionLocal()
     try:
-        return handle_telegram_message(db, str(chat_id), text, is_start_command)
+        return dispatch_dialog_message(db, str(chat_id), text, is_start_command)
     finally:
         db.close()
 
@@ -355,8 +355,16 @@ async def run_long_polling(token: str) -> None:
                 r = await client.get(f"{_api_base(token)}/getUpdates", params=params)
                 data = r.json()
                 if not data.get("ok"):
-                    _log.warning("telegram getUpdates not ok: %s", data)
-                    await asyncio.sleep(3)
+                    err = data.get("error_code") if isinstance(data, dict) else None
+                    # 409 — второй long poll на тот же токен; без паузы спамим API и лог.
+                    if err == 409:
+                        _log.warning(
+                            "telegram getUpdates 409 (другой getUpdates на этот бот) — пауза 20 с"
+                        )
+                        await asyncio.sleep(20)
+                    else:
+                        _log.warning("telegram getUpdates not ok: %s", data)
+                        await asyncio.sleep(3)
                     continue
                 for upd in data.get("result") or []:
                     uid = upd.get("update_id")
@@ -438,7 +446,7 @@ async def run_long_polling(token: str) -> None:
                             if txt:
                                 await _send_message(client, token, chat_id, txt, reply_markup=markup)
                         continue
-                    lines = await asyncio.to_thread(_run_examination_turn, chat_id, text, is_start)
+                    lines = await asyncio.to_thread(_run_dialog_dispatch_turn, chat_id, text, is_start)
                     for line in lines:
                         if line:
                             await _send_message(client, token, chat_id, line)

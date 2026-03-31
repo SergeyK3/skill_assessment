@@ -16,7 +16,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from skill_assessment.domain.entities import AssessmentSessionStatus
+from skill_assessment.domain.entities import AssessmentSessionStatus, SessionPhase
 from skill_assessment.domain.examination_entities import ExaminationPhase, ExaminationSessionStatus as ExamSessionStatus
 from skill_assessment.infrastructure.db_models import AssessmentSessionRow, ExaminationSessionRow
 from skill_assessment.services.docs_survey_hr_notify import notify_hr_docs_survey_consent_issue
@@ -231,6 +231,10 @@ def handle_pd_consent_callback(db: Session, chat_id: str, callback_data: str) ->
         return DocsSurveyCallbackResult("Выберите дату", outgoing)
 
     row.docs_survey_pd_consent_status = "declined"
+    row.status = AssessmentSessionStatus.CANCELLED.value
+    row.phase = SessionPhase.PART1.value
+    row.completed_at = now
+    row.docs_survey_exam_gate_awaiting = False
     db.commit()
     db.refresh(row)
     sent = notify_hr_docs_survey_consent_issue(db, row, "declined")
@@ -281,6 +285,10 @@ def handle_docs_survey_pd_consent_message(
         out_msg.append((MSG_SCHEDULING_AFTER_CONSENT, kb))
         return out_msg
     row.docs_survey_pd_consent_status = "declined"
+    row.status = AssessmentSessionStatus.CANCELLED.value
+    row.phase = SessionPhase.PART1.value
+    row.completed_at = now
+    row.docs_survey_exam_gate_awaiting = False
     db.commit()
     db.refresh(row)
     sent = notify_hr_docs_survey_consent_issue(db, row, "declined")
